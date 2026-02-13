@@ -1,0 +1,61 @@
+version: "3.8"
+services:
+    eurobelleza-back:
+        build:
+            args:
+                user: admin
+                uid: 1000
+            context: ./
+            dockerfile: Dockerfile
+        image: eurobelleza-back
+        container_name: eurobelleza-back
+        restart: unless-stopped
+        working_dir: /var/www/
+        depends_on:
+            - eurobelleza-mysql
+        volumes:
+            - ./:/var/www
+            - ./docker/php/conf.d/opcache.ini:/usr/local/etc/php/conf.d/opcache.ini
+        networks:
+            - eurobelleza-network
+        command: >
+            bash -c "chmod -R 775 /var/www/storage 2>/dev/null || true && chown -R www-data:www-data /var/www/storage 2>/dev/null || true && php-fpm"
+
+    eurobelleza-mysql:
+        image: mariadb:10.10.2
+        container_name: eurobelleza-mysql
+        command: --default-authentication-plugin=mysql_native_password
+        restart: unless-stopped
+        environment:
+            MYSQL_DATABASE: ${DB_DATABASE}
+            MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+            MYSQL_PASSWORD: ${DB_PASSWORD}
+            MYSQL_USER: ${DB_USERNAME}
+        ports:
+            - "${DOCKER_DB_EXTERNAL_PORT:-3312}:3306"
+        volumes:
+            - eurobelleza-db-volume:/var/lib/mysql
+        networks:
+            - eurobelleza-network
+
+    eurobelleza-nginx:
+        image: nginx:stable-alpine
+        container_name: eurobelleza-nginx
+        restart: unless-stopped
+        depends_on:
+            - eurobelleza-back
+        ports:
+            - "${DOCKER_NGNX_EXTERNAL_PORT:-8093}:80"
+        volumes:
+            - ./:/var/www
+            - ./docker/nginx:/etc/nginx/conf.d/
+        networks:
+            - eurobelleza-network
+
+volumes:
+    eurobelleza-db-volume:
+
+networks:
+    eurobelleza-network:
+        name: eurobelleza-network
+        driver: bridge
