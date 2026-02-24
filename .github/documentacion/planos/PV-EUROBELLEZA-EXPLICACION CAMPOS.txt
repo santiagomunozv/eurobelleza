@@ -1,0 +1,48 @@
+1)POSICION 1 A 10  = Número de orden de compra del cliente
+2)POSICION 11      = Indica en como leer el cliente (1=con código EAN 2=con tercero del sistema)
+3)POSICION 12 A 31 = Código EAN de las equivalencias del EDI 
+                     Se deja en Blanco cuando no hay codigo EAN
+4)POSICION 32 A 44 = Código del cliente
+5)POSICION 45 A 46 = Sucursal del cliente si no tiene va “00”
+6)POSICION 47 A 54 = Fecha del pedido (AAAAMMDD)
+7)POSICION 55 A 57 = Centro de operación de la localización (Bodega)
+8)POSICION 58 A 59 = Localización de la transacción 
+9)POSICION 60 A 60 = Identifica modo de encontrar el código del ítem “B” por Código de Barras
+                     “I” por Código de Item,“R” por Referencia,“D” por Descripción.
+10)POSICION 61 A 75 = Código de barras del ítem (este es exigido si el ítem maneja tallas)
+11)POSICION 76 A 90 = Código del ítem (puede ir el código la referencia principal o alterna) 
+                      (si va por código solo van llenas las primeras 6 posiciones)
+12)POSICION 91 A 93 = Extensión del  ítem (solo si el ítem maneja extensiones)
+13)POSICION 94 A 101 = Fecha de entrega del ítem (AAAAMMDD) (se puede mover la del pedido)
+                    ***Pregunta ?? Cual se deja ? La misma fecha del pedido??***
+14)POSICION 102 A 104 = Unidad de captura (la unidad en que se hace el pedido)
+                        (si va a ir llena la cantidad 2 aquí debe ir la unidad de inventario 2 del ítem)
+                    ***Cuando item maneja 2 unidades de medidda en este caso cliente no lo maneja***
+15)POSICION 105 A 117 = Cantidad de la transacción   
+                        (Debe ir en la unidad de captura, son 9 enteros, 3 decimales y el signo 999999999000+)
+16)POSICION 118 A 130 = Cantidad en unidad inventario 2 (solo si maneja unidad alterna y no captura la CANT-PED-1.
+                        Son 9 enteros, 3 decimales y el signo 999999999000+)
+17)POSICION 131 A 131 = Indica en que unidad está el precio (1=Unidad de Inventario 2=Unidad alterna 3=Obsequio)
+                    ***Siempre 1 en la unidad del inventario
+18)POSICION 132 A 134 = Lista de precio
+19)POSICION 135 A 136 = Lista de descuento por línea
+20)POSICION 137 A 148 = Precio unitario,(solo para  lista de precio libre si es normal u obsequio debe ir en ceros, 
+                        son 9 enteros, 2 decimales y el signo 99999999900+) 
+21)POSICION 149 A 152 = Porcentaje de descuento línea 1 (son 2 enteros y 2 decimales 9999)
+22)POSICION 153 A 156 = Porcentaje de descuento línea 2 (son 2 enteros y 2 decimales 9999
+23)POSICION 157 A 176 = Detalle del movimiento del pedido
+24)POSISION 177 A 216 = Descripción del ítem (para cuando el indicador del ítem es “D”)
+                   ***Para este caso se escogio la R=Referencia ver Nro.9
+25)POSICION 217 A 220 = Código del Punto de envío puede ir en blancos  
+26)POSICION 221 A 280 = Observación 1 del pedido en el documento
+27)POSICION 281 A 340 = Observación 2 del pedido en el documento
+28)POSICION 341 A 380 = 1ra Linea de descripcion variable del item generico o de servicios
+29)POSICION 381 A 420 = 2da Linea de descripcion variable del item generico o de servicios
+30)POSICION 421 A 460 = 3ra Linea de descripcion variable del item generico o de servicios
+31)POSICION 461 A 500 = 4ta Linea de descripcion variable del item generico o de servicios
+32)POSICION 501 A 513 = Código Documento de identidad del Vendedor.
+33)POSICION 514 A 515 = Motivo del movimiento del pedido, si esta en blanco se asume el que le han digitado por pantalla.
+34)POSICION 516 A 523 = Centro de costo del movimiento del pedido, si esta en blanco se asume el que le han digitado por pantalla.
+35)POSICION 524 A 533 = Proyecto del movimiento del pedido, si esta en blanco se asume el que le han digitado por pantalla.
+36)POSICION 534 A 535 = Condición de Pago, Si este campo se deja vacío el sistema tomara la condición de pago asociada al cliente del documento.
+37)POSICION 536 A 543 = Campo documento alterno.
