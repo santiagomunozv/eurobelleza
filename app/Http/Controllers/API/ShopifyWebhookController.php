@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Repositories\OrderRepository;
 use App\Enums\OrderStatusEnum;
+use App\Jobs\ProcessShopifyOrder;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -71,6 +72,23 @@ class ShopifyWebhookController extends Controller
       ]);
 
       DB::commit();
+
+      $financialStatus = $orderData['financial_status'] ?? null;
+
+      if ($financialStatus === 'paid') {
+        ProcessShopifyOrder::dispatch($order);
+
+        Log::info('Job de procesamiento despachado', [
+          'order_id' => $order->id,
+          'shopify_order_id' => $shopifyOrderId,
+        ]);
+      } else {
+        Log::info('Pedido no pagado, job no despachado', [
+          'order_id' => $order->id,
+          'shopify_order_id' => $shopifyOrderId,
+          'financial_status' => $financialStatus,
+        ]);
+      }
 
       return response()->json([
         'message' => 'Order received successfully',
