@@ -52,15 +52,15 @@ return [
 
     'default_currency' => env('SIESA_DEFAULT_CURRENCY', 'COP'),
 
-    'default_price_list' => env('SIESA_DEFAULT_PRICE_LIST', '999'),
+    'default_price_list' => env('SIESA_DEFAULT_PRICE_LIST', '012'),
 
-    'default_seller_code' => env('SIESA_DEFAULT_SELLER_CODE', ''),
+    'default_seller_code' => env('SIESA_DEFAULT_SELLER_CODE', '16746504'),
 
-    'default_movement_reason' => env('SIESA_DEFAULT_MOVEMENT_REASON', ''),
+    'default_movement_reason' => env('SIESA_DEFAULT_MOVEMENT_REASON', '01'),
 
-    'default_cost_center' => env('SIESA_DEFAULT_COST_CENTER', ''),
+    'default_cost_center' => env('SIESA_DEFAULT_COST_CENTER', '021001'),
 
-    'default_payment_condition' => env('SIESA_DEFAULT_PAYMENT_CONDITION', ''),
+    'default_payment_condition' => env('SIESA_DEFAULT_PAYMENT_CONDITION', '30'),
 
     /*
     |--------------------------------------------------------------------------

@@ -44,12 +44,18 @@ class SiesaFlatFileGenerator
         $shippingAddress = $orderData['shipping_address'] ?? [];
         $observations = SiesaFileStructure::formatObservations($shippingAddress);
 
+        $paymentGateways = $orderData['payment_gateway_names'] ?? [];
+        $sucursal = in_array('Addi Payment', $paymentGateways) ? '02' : '01';
+
+        $orderNumber = (string)($orderData['order_number'] ?? '');
+        $documentoAlterno = str_pad($orderNumber, 8, '0', STR_PAD_LEFT);
+
         return [
-            'orden_compra' => (string)($orderData['order_number'] ?? ''),
+            'orden_compra' => $orderNumber,
             'tipo_cliente' => '2',
             'codigo_ean' => '',
-            'codigo_cliente' => '2222222222222',
-            'sucursal' => '00',
+            'codigo_cliente' => '222222222222',
+            'sucursal' => $sucursal,
             'fecha_pedido' => SiesaFileStructure::formatDate($orderData['created_at'] ?? now()),
             'bodega' => config('siesa.default_warehouse', '001'),
             'localizacion' => config('siesa.default_location', '15'),
@@ -60,7 +66,7 @@ class SiesaFlatFileGenerator
             'centro_costo' => config('siesa.default_cost_center', ''),
             'proyecto' => '',
             'condicion_pago' => config('siesa.default_payment_condition', ''),
-            'documento_alterno' => '',
+            'documento_alterno' => $documentoAlterno,
         ];
     }
 
@@ -76,7 +82,7 @@ class SiesaFlatFileGenerator
         $line = '';
 
         // 1) Posiciones 1-10: Orden de compra
-        $line .= SiesaFileStructure::padRight($commonData['orden_compra'], SiesaFileStructure::ORDEN_COMPRA_LENGTH);
+        $line .= SiesaFileStructure::padLeft($commonData['orden_compra'], SiesaFileStructure::ORDEN_COMPRA_LENGTH, '0');
 
         // 2) Posición 11: Tipo de cliente
         $line .= $commonData['tipo_cliente'];
@@ -130,7 +136,7 @@ class SiesaFlatFileGenerator
         $line .= '1';
 
         // 18) Posiciones 132-134: Lista de precio
-        $priceList = config('siesa.default_price_list', '999');
+        $priceList = config('siesa.default_price_list', '012');
         $line .= SiesaFileStructure::padRight($priceList, SiesaFileStructure::LISTA_PRECIO_LENGTH);
 
         // 19) Posiciones 135-136: Lista de descuento
