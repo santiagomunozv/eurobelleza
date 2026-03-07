@@ -7,17 +7,16 @@ return [
     | Shopify Store Configuration
     |--------------------------------------------------------------------------
     |
-    | Configuración de la tienda Shopify y credenciales de API.
+    | Configuración de la tienda Shopify y credenciales OAuth.
+    | El access_token se renueva automáticamente cada 24h usando client credentials.
     |
     */
 
     'shop_domain' => env('SHOPIFY_SHOP_DOMAIN'),
 
-    'api_key' => env('SHOPIFY_API_KEY'),
+    'client_id' => env('SHOPIFY_CLIENT_ID'),
 
-    'api_secret' => env('SHOPIFY_API_SECRET'),
-
-    'access_token' => env('SHOPIFY_ACCESS_TOKEN'),
+    'client_secret' => env('SHOPIFY_CLIENT_SECRET'),
 
     'api_version' => env('SHOPIFY_API_VERSION', '2024-01'),
 
@@ -61,5 +60,18 @@ return [
     'rate_limit_delay' => env('SHOPIFY_RATE_LIMIT_DELAY', 500), // milisegundos
 
     'max_retries' => env('SHOPIFY_MAX_RETRIES', 3),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Sync Configuration
+    |--------------------------------------------------------------------------
+    |
+    | Configuración para sincronización de pedidos desde Shopify API.
+    |
+    */
+
+    'sync_days_back' => env('SHOPIFY_SYNC_DAYS_BACK', 1),
+
+    'sync_per_page' => env('SHOPIFY_SYNC_PER_PAGE', 250),
 
 ];
