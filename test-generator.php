@@ -25,7 +25,7 @@ echo "Pedido: #{$order->shopify_order_number}\n";
 echo "Fecha: {$order->created_at}\n";
 echo "Productos: " . count($order->order_json['line_items']) . "\n\n";
 
-$generator = new SiesaFlatFileGenerator();
+$generator = $app->make(SiesaFlatFileGenerator::class);
 
 try {
   $content = $generator->generate($order);

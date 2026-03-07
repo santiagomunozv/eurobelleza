@@ -18,6 +18,9 @@
                     <x-nav-link :href="route('admin.orders.index')" :active="request()->routeIs('admin.orders.*')">
                         {{ __('Pedidos') }}
                     </x-nav-link>
+                    <x-nav-link :href="route('admin.siesa.configuration.edit')" :active="request()->routeIs('admin.siesa.configuration.*')">
+                        {{ __('Config. SIESA') }}
+                    </x-nav-link>
                 </div>
             </div>
 
@@ -79,6 +82,9 @@
             </x-responsive-nav-link>
             <x-responsive-nav-link :href="route('admin.orders.index')" :active="request()->routeIs('admin.orders.*')">
                 {{ __('Pedidos') }}
+            </x-responsive-nav-link>
+            <x-responsive-nav-link :href="route('admin.siesa.configuration.edit')" :active="request()->routeIs('admin.siesa.configuration.*')">
+                {{ __('Config. SIESA') }}
             </x-responsive-nav-link>
         </div>
 

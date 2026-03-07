@@ -3,10 +3,19 @@
 namespace App\Services\Siesa;
 
 use App\Models\Order;
+use App\Models\SiesaGeneralConfiguration;
 use App\Helpers\SiesaFileStructure;
+use App\Services\OrderLogService;
 
 class SiesaFlatFileGenerator
 {
+    private OrderLogService $orderLogService;
+
+    public function __construct(OrderLogService $orderLogService)
+    {
+        $this->orderLogService = $orderLogService;
+    }
+
     /**
      * Genera el contenido del archivo plano SIESA a partir de un pedido
      *
@@ -15,9 +24,19 @@ class SiesaFlatFileGenerator
      */
     public function generate(Order $order): string
     {
+        try {
+            $config = SiesaGeneralConfiguration::getConfig();
+        } catch (\Exception $e) {
+            $this->orderLogService->logError($order, 'siesa_file_generation', [
+                'error' => 'No se encontró la configuración general de SIESA',
+                'message' => $e->getMessage(),
+            ]);
+            throw new \Exception("No se encontró la configuración general de SIESA. Por favor configure el sistema antes de generar archivos.");
+        }
+
         $orderData = $order->order_json;
 
-        $commonData = $this->prepareCommonData($orderData);
+        $commonData = $this->prepareCommonData($orderData, $config);
 
         $lineItems = $orderData['line_items'] ?? [];
 
@@ -27,7 +46,7 @@ class SiesaFlatFileGenerator
 
         $lines = [];
         foreach ($lineItems as $lineItem) {
-            $lines[] = $this->generateLine($commonData, $lineItem);
+            $lines[] = $this->generateLine($commonData, $lineItem, $config);
         }
 
         return implode("\n", $lines);
@@ -37,9 +56,10 @@ class SiesaFlatFileGenerator
      * Prepara los datos comunes del encabezado que se repiten en cada línea
      *
      * @param array $orderData JSON del pedido de Shopify
+     * @param SiesaGeneralConfiguration $config Configuración general de SIESA
      * @return array
      */
-    private function prepareCommonData(array $orderData): array
+    private function prepareCommonData(array $orderData, SiesaGeneralConfiguration $config): array
     {
         $shippingAddress = $orderData['shipping_address'] ?? [];
         $observations = SiesaFileStructure::formatObservations($shippingAddress);
@@ -52,17 +72,17 @@ class SiesaFlatFileGenerator
 
         return [
             'orden_compra' => $orderNumber,
-            'tipo_cliente' => '2',
+            'tipo_cliente' => $config->tipo_cliente->value,
             'codigo_ean' => '',
-            'codigo_cliente' => '222222222222',
+            'codigo_cliente' => $config->codigo_cliente,
             'sucursal' => $sucursal,
             'fecha_pedido' => SiesaFileStructure::formatDate($orderData['created_at'] ?? now()),
             'bodega' => config('siesa.default_warehouse', '001'),
             'localizacion' => config('siesa.default_location', '15'),
             'observacion1' => $observations['observacion1'],
             'observacion2' => $observations['observacion2'],
-            'codigo_vendedor' => config('siesa.default_seller_code', ''),
-            'motivo' => config('siesa.default_movement_reason', ''),
+            'codigo_vendedor' => $config->codigo_vendedor,
+            'motivo' => $config->motivo,
             'centro_costo' => config('siesa.default_cost_center', ''),
             'proyecto' => '',
             'condicion_pago' => config('siesa.default_payment_condition', ''),
@@ -75,9 +95,10 @@ class SiesaFlatFileGenerator
      *
      * @param array $commonData Datos comunes del encabezado
      * @param array $lineItem Producto del pedido
+     * @param SiesaGeneralConfiguration $config Configuración general de SIESA
      * @return string Línea de 543 caracteres
      */
-    private function generateLine(array $commonData, array $lineItem): string
+    private function generateLine(array $commonData, array $lineItem, SiesaGeneralConfiguration $config): string
     {
         $line = '';
 
@@ -105,8 +126,8 @@ class SiesaFlatFileGenerator
         // 8) Posiciones 58-59: Localización
         $line .= SiesaFileStructure::padRight($commonData['localizacion'], SiesaFileStructure::LOCALIZACION_LENGTH);
 
-        // 9) Posición 60: Tipo de búsqueda del ítem (R = por referencia)
-        $line .= 'R';
+        // 9) Posición 60: Tipo de búsqueda del ítem
+        $line .= $config->tipo_busqueda_item->value;
 
         // 10) Posiciones 61-75: Código de barras (vacío)
         $line .= SiesaFileStructure::padRight('', SiesaFileStructure::CODIGO_BARRAS_LENGTH);
@@ -122,8 +143,7 @@ class SiesaFlatFileGenerator
         $line .= $commonData['fecha_pedido'];
 
         // 14) Posiciones 102-104: Unidad de captura
-        $unitCode = config('siesa.default_unit_code', 'UND');
-        $line .= SiesaFileStructure::padRight($unitCode, SiesaFileStructure::UNIDAD_CAPTURA_LENGTH);
+        $line .= SiesaFileStructure::padRight($config->unidad_captura, SiesaFileStructure::UNIDAD_CAPTURA_LENGTH);
 
         // 15) Posiciones 105-117: Cantidad
         $quantity = intval($lineItem['quantity'] ?? 0);
@@ -132,12 +152,11 @@ class SiesaFlatFileGenerator
         // 16) Posiciones 118-130: Cantidad unidad 2 (ceros)
         $line .= SiesaFileStructure::formatQuantity(0);
 
-        // 17) Posición 131: Unidad del precio (1 = unidad inventario)
-        $line .= '1';
+        // 17) Posición 131: Unidad del precio
+        $line .= $config->unidad_precio->value;
 
         // 18) Posiciones 132-134: Lista de precio
-        $priceList = config('siesa.default_price_list', '012');
-        $line .= SiesaFileStructure::padRight($priceList, SiesaFileStructure::LISTA_PRECIO_LENGTH);
+        $line .= SiesaFileStructure::padRight($config->lista_precio, SiesaFileStructure::LISTA_PRECIO_LENGTH);
 
         // 19) Posiciones 135-136: Lista de descuento
         $line .= SiesaFileStructure::padRight('', SiesaFileStructure::LISTA_DESCUENTO_LENGTH);
@@ -153,7 +172,7 @@ class SiesaFlatFileGenerator
         $line .= SiesaFileStructure::formatPercentage(0);
 
         // 23) Posiciones 157-176: Detalle del movimiento
-        $line .= SiesaFileStructure::padRight('PEDIDO SHOPIFY', SiesaFileStructure::DETALLE_MOVIMIENTO_LENGTH);
+        $line .= SiesaFileStructure::padRight($config->detalle_movimiento, SiesaFileStructure::DETALLE_MOVIMIENTO_LENGTH);
 
         // 24) Posiciones 177-216: Descripción del ítem (vacío porque tipo = R)
         $line .= SiesaFileStructure::padRight('', SiesaFileStructure::DESCRIPCION_ITEM_LENGTH);

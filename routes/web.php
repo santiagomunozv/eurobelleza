@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Admin\OrderController;
+use App\Http\Controllers\Admin\SiesaGeneralConfigurationController;
 
 /*
 |--------------------------------------------------------------------------
@@ -24,6 +25,12 @@ Route::get('/dashboard', function () {
 
 Route::middleware(['auth'])->prefix('admin')->name('admin.')->group(function () {
     Route::get('/orders', [OrderController::class, 'index'])->name('orders.index');
+
+    // Configuración general de SIESA
+    Route::get('/siesa/configuration', [SiesaGeneralConfigurationController::class, 'edit'])
+        ->name('siesa.configuration.edit');
+    Route::put('/siesa/configuration', [SiesaGeneralConfigurationController::class, 'update'])
+        ->name('siesa.configuration.update');
 });
 
 require __DIR__ . '/auth.php';
