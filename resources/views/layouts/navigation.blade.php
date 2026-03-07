@@ -21,6 +21,9 @@
                     <x-nav-link :href="route('admin.siesa.configuration.edit')" :active="request()->routeIs('admin.siesa.configuration.*')">
                         {{ __('Config. SIESA') }}
                     </x-nav-link>
+                    <x-nav-link :href="route('admin.siesa.payment-gateways.index')" :active="request()->routeIs('admin.siesa.payment-gateways.*')">
+                        {{ __('Métodos de Pago') }}
+                    </x-nav-link>
                 </div>
             </div>
 
@@ -85,6 +88,9 @@
             </x-responsive-nav-link>
             <x-responsive-nav-link :href="route('admin.siesa.configuration.edit')" :active="request()->routeIs('admin.siesa.configuration.*')">
                 {{ __('Config. SIESA') }}
+            </x-responsive-nav-link>
+            <x-responsive-nav-link :href="route('admin.siesa.payment-gateways.index')" :active="request()->routeIs('admin.siesa.payment-gateways.*')">
+                {{ __('Métodos de Pago') }}
             </x-responsive-nav-link>
         </div>
 

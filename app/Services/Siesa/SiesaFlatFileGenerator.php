@@ -4,6 +4,7 @@ namespace App\Services\Siesa;
 
 use App\Models\Order;
 use App\Models\SiesaGeneralConfiguration;
+use App\Models\SiesaPaymentGatewayMapping;
 use App\Helpers\SiesaFileStructure;
 use App\Services\OrderLogService;
 
@@ -36,7 +37,7 @@ class SiesaFlatFileGenerator
 
         $orderData = $order->order_json;
 
-        $commonData = $this->prepareCommonData($orderData, $config);
+        $commonData = $this->prepareCommonData($order, $orderData, $config);
 
         $lineItems = $orderData['line_items'] ?? [];
 
@@ -55,17 +56,37 @@ class SiesaFlatFileGenerator
     /**
      * Prepara los datos comunes del encabezado que se repiten en cada línea
      *
+     * @param Order $order Pedido de Shopify
      * @param array $orderData JSON del pedido de Shopify
      * @param SiesaGeneralConfiguration $config Configuración general de SIESA
      * @return array
      */
-    private function prepareCommonData(array $orderData, SiesaGeneralConfiguration $config): array
+    private function prepareCommonData(Order $order, array $orderData, SiesaGeneralConfiguration $config): array
     {
         $shippingAddress = $orderData['shipping_address'] ?? [];
         $observations = SiesaFileStructure::formatObservations($shippingAddress);
 
+        // Obtener payment gateway y buscar configuración
         $paymentGateways = $orderData['payment_gateway_names'] ?? [];
-        $sucursal = in_array('Addi Payment', $paymentGateways) ? '02' : '01';
+
+        if (empty($paymentGateways)) {
+            $this->orderLogService->logError($order, 'payment_gateway_not_found', [
+                'error' => 'El pedido no tiene payment_gateway_names definido'
+            ]);
+            throw new \Exception("El pedido #{$order->shopify_order_number} no tiene método de pago definido.");
+        }
+
+        $gatewayName = $paymentGateways[0]; // Tomar el primero
+
+        $gatewayMapping = SiesaPaymentGatewayMapping::findByGateway($gatewayName);
+
+        if (!$gatewayMapping) {
+            $this->orderLogService->logError($order, 'payment_gateway_mapping_not_found', [
+                'payment_gateway' => $gatewayName,
+                'error' => 'No existe configuración para este método de pago en SIESA'
+            ]);
+            throw new \Exception("No existe configuración para el método de pago: {$gatewayName}");
+        }
 
         $orderNumber = (string)($orderData['order_number'] ?? '');
         $documentoAlterno = str_pad($orderNumber, 8, '0', STR_PAD_LEFT);
@@ -75,7 +96,7 @@ class SiesaFlatFileGenerator
             'tipo_cliente' => $config->tipo_cliente->value,
             'codigo_ean' => '',
             'codigo_cliente' => $config->codigo_cliente,
-            'sucursal' => $sucursal,
+            'sucursal' => $gatewayMapping->sucursal,
             'fecha_pedido' => SiesaFileStructure::formatDate($orderData['created_at'] ?? now()),
             'bodega' => config('siesa.default_warehouse', '001'),
             'localizacion' => config('siesa.default_location', '15'),
@@ -83,9 +104,9 @@ class SiesaFlatFileGenerator
             'observacion2' => $observations['observacion2'],
             'codigo_vendedor' => $config->codigo_vendedor,
             'motivo' => $config->motivo,
-            'centro_costo' => config('siesa.default_cost_center', ''),
+            'centro_costo' => $gatewayMapping->centro_costo,
             'proyecto' => '',
-            'condicion_pago' => config('siesa.default_payment_condition', ''),
+            'condicion_pago' => $gatewayMapping->condicion_pago,
             'documento_alterno' => $documentoAlterno,
         ];
     }

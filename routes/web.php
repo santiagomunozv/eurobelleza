@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Admin\OrderController;
 use App\Http\Controllers\Admin\SiesaGeneralConfigurationController;
+use App\Http\Controllers\Admin\SiesaPaymentGatewayMappingController;
 
 /*
 |--------------------------------------------------------------------------
@@ -31,6 +32,11 @@ Route::middleware(['auth'])->prefix('admin')->name('admin.')->group(function () 
         ->name('siesa.configuration.edit');
     Route::put('/siesa/configuration', [SiesaGeneralConfigurationController::class, 'update'])
         ->name('siesa.configuration.update');
+
+    // Métodos de pago SIESA
+    Route::resource('/siesa/payment-gateways', SiesaPaymentGatewayMappingController::class)
+        ->except(['show'])
+        ->names('siesa.payment-gateways');
 });
 
 require __DIR__ . '/auth.php';
