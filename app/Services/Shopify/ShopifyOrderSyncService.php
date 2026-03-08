@@ -6,6 +6,8 @@ use App\Models\Order;
 use App\Repositories\OrderRepository;
 use App\Jobs\ProcessShopifyOrder;
 use App\Enums\OrderStatusEnum;
+use App\Services\OrderConfigurationValidator;
+use App\Services\OrderLogService;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 
@@ -13,13 +15,19 @@ class ShopifyOrderSyncService
 {
     private ShopifyApiClient $apiClient;
     private OrderRepository $orderRepository;
+    private OrderConfigurationValidator $configValidator;
+    private OrderLogService $orderLogService;
 
     public function __construct(
         ShopifyApiClient $apiClient,
-        OrderRepository $orderRepository
+        OrderRepository $orderRepository,
+        OrderConfigurationValidator $configValidator,
+        OrderLogService $orderLogService
     ) {
         $this->apiClient = $apiClient;
         $this->orderRepository = $orderRepository;
+        $this->configValidator = $configValidator;
+        $this->orderLogService = $orderLogService;
     }
 
     /**
@@ -39,6 +47,7 @@ class ShopifyOrderSyncService
             'orders_existing' => 0,
             'orders_missing' => 0,
             'orders_processed' => 0,
+            'orders_skipped' => 0,
             'orders_failed' => 0,
             'pending_updated' => 0,
             'pending_reprocessed' => 0,
@@ -67,6 +76,7 @@ class ShopifyOrderSyncService
             if (!empty($missingOrders) && !$dryRun) {
                 $result = $this->processMissingOrders($missingOrders);
                 $stats['orders_processed'] = $result['processed'];
+                $stats['orders_skipped'] = $result['skipped'] ?? 0;
                 $stats['orders_failed'] = $result['failed'];
                 $stats['errors'] = array_merge($stats['errors'], $result['errors']);
             }
@@ -122,12 +132,14 @@ class ShopifyOrderSyncService
     {
         $processed = 0;
         $failed = 0;
+        $skipped = 0;
         $errors = [];
 
         foreach ($missingOrders as $orderData) {
             try {
                 $shopifyOrderId = (string)($orderData['id'] ?? '');
                 $shopifyOrderNumber = (string)($orderData['order_number'] ?? '');
+                $financialStatus = $orderData['financial_status'] ?? null;
 
                 // Usar el mismo patrón que el webhook
                 $order = $this->orderRepository->create([
@@ -138,15 +150,24 @@ class ShopifyOrderSyncService
                     'attempts' => 0,
                 ]);
 
-                // Despachar job para procesar
-                ProcessShopifyOrder::dispatch($order);
+                // Solo despachar si está pagado y tiene configuración válida
+                if ($financialStatus === 'paid') {
+                    $validation = $this->configValidator->validate($orderData);
 
-                $processed++;
-
-                Log::info('Pedido sincronizado desde Shopify', [
-                    'shopify_order_id' => $order->shopify_order_id,
-                    'order_number' => $order->shopify_order_number,
-                ]);
+                    if ($validation['valid']) {
+                        ProcessShopifyOrder::dispatch($order);
+                        $processed++;
+                    } else {
+                        // Configuración incompleta, mantener en PENDING
+                        $this->orderLogService->logError($order, 'configuration_validation_failed', [
+                            'errors' => $validation['errors'],
+                            'details' => $validation['details'],
+                        ]);
+                        $skipped++;
+                    }
+                } else {
+                    $skipped++;
+                }
             } catch (\Exception $e) {
                 $failed++;
                 $orderNumber = $orderData['order_number'] ?? $orderData['id'] ?? 'unknown';
@@ -161,6 +182,7 @@ class ShopifyOrderSyncService
 
         return [
             'processed' => $processed,
+            'skipped' => $skipped,
             'failed' => $failed,
             'errors' => $errors,
         ];
@@ -209,21 +231,21 @@ class ShopifyOrderSyncService
 
                 $updated++;
 
-                Log::info('Pedido PENDING actualizado con datos de Shopify', [
-                    'shopify_order_id' => $shopifyOrderId,
-                    'old_financial_status' => $oldFinancialStatus,
-                    'new_financial_status' => $newFinancialStatus,
-                ]);
+                // Si cambió el financial_status a 'paid', validar configuración y despachar job
+                if ($oldFinancialStatus !== $newFinancialStatus && $newFinancialStatus === 'paid') {
+                    $validation = $this->configValidator->validate($newOrderData);
 
-                // Si cambió el financial_status, volver a despachar el job
-                if ($oldFinancialStatus !== $newFinancialStatus) {
-                    ProcessShopifyOrder::dispatch($order);
-                    $reprocessed++;
-
-                    Log::info('Pedido PENDING reprocesado por cambio en financial_status', [
-                        'shopify_order_id' => $shopifyOrderId,
-                        'financial_status' => $newFinancialStatus,
-                    ]);
+                    if ($validation['valid']) {
+                        ProcessShopifyOrder::dispatch($order);
+                        $reprocessed++;
+                    } else {
+                        // Configuración incompleta, mantener en PENDING
+                        $this->orderLogService->logError($order, 'configuration_validation_failed', [
+                            'errors' => $validation['errors'],
+                            'details' => $validation['details'],
+                            'context' => 'pending_order_update',
+                        ]);
+                    }
                 }
             } catch (\Exception $e) {
                 $errors[] = "Pedido {$order->shopify_order_number}: {$e->getMessage()}";

@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Repositories\OrderRepository;
 use App\Enums\OrderStatusEnum;
 use App\Jobs\ProcessShopifyOrder;
+use App\Services\OrderConfigurationValidator;
+use App\Services\OrderLogService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -14,97 +16,93 @@ use Exception;
 
 class ShopifyWebhookController extends Controller
 {
-  /**
-   * Recibe el webhook de creación de pedido desde Shopify
-   *
-   * @param Request $request
-   * @param OrderRepository $orderRepository
-   * @return JsonResponse
-   */
-  public function ordersCreate(Request $request, OrderRepository $orderRepository): JsonResponse
-  {
-    DB::beginTransaction();
+    /**
+     * Recibe el webhook de creación de pedido desde Shopify
+     *
+     * @param Request $request
+     * @param OrderRepository $orderRepository
+     * @param OrderConfigurationValidator $configValidator
+     * @param OrderLogService $orderLogService
+     * @return JsonResponse
+     */
+    public function ordersCreate(
+        Request $request,
+        OrderRepository $orderRepository,
+        OrderConfigurationValidator $configValidator,
+        OrderLogService $orderLogService
+    ): JsonResponse {
+        DB::beginTransaction();
 
-    try {
-      $orderData = $request->all();
+        try {
+            $orderData = $request->all();
 
-      $shopifyOrderId = $orderData['id'] ?? null;
-      $shopifyOrderNumber = $orderData['order_number'] ?? $orderData['name'] ?? null;
+            $shopifyOrderId = $orderData['id'] ?? null;
+            $shopifyOrderNumber = $orderData['order_number'] ?? $orderData['name'] ?? null;
 
-      if (!$shopifyOrderId || !$shopifyOrderNumber) {
-        Log::error('Webhook de Shopify sin datos requeridos', [
-          'data' => $orderData
-        ]);
+            if (!$shopifyOrderId || !$shopifyOrderNumber) {
+                Log::error('Webhook de Shopify sin datos requeridos', [
+                    'data' => $orderData
+                ]);
 
-        return response()->json([
-          'error' => 'Missing required fields'
-        ], 400);
-      }
+                return response()->json([
+                    'error' => 'Missing required fields'
+                ], 400);
+            }
 
-      $existingOrder = $orderRepository->findByShopifyOrderId($shopifyOrderId);
+            $existingOrder = $orderRepository->findByShopifyOrderId($shopifyOrderId);
 
-      if ($existingOrder) {
-        Log::info('Pedido duplicado ignorado', [
-          'shopify_order_id' => $shopifyOrderId,
-          'order_id' => $existingOrder->id
-        ]);
+            if ($existingOrder) {
+                DB::commit();
 
-        DB::commit();
+                return response()->json([
+                    'message' => 'Order already exists',
+                    'order_id' => $existingOrder->id
+                ], 200);
+            }
 
-        return response()->json([
-          'message' => 'Order already exists',
-          'order_id' => $existingOrder->id
-        ], 200);
-      }
+            $order = $orderRepository->create([
+                'shopify_order_id' => $shopifyOrderId,
+                'shopify_order_number' => $shopifyOrderNumber,
+                'order_json' => $orderData,
+                'status' => OrderStatusEnum::PENDING->value,
+                'attempts' => 0,
+            ]);
 
-      $order = $orderRepository->create([
-        'shopify_order_id' => $shopifyOrderId,
-        'shopify_order_number' => $shopifyOrderNumber,
-        'order_json' => $orderData,
-        'status' => OrderStatusEnum::PENDING->value,
-        'attempts' => 0,
-      ]);
+            DB::commit();
 
-      Log::info('Pedido recibido de Shopify', [
-        'order_id' => $order->id,
-        'shopify_order_id' => $shopifyOrderId,
-        'shopify_order_number' => $shopifyOrderNumber,
-      ]);
+            $financialStatus = $orderData['financial_status'] ?? null;
 
-      DB::commit();
+            if ($financialStatus === 'paid') {
+                // Validar configuración antes de despachar job
+                $validation = $configValidator->validate($orderData);
 
-      $financialStatus = $orderData['financial_status'] ?? null;
+                if ($validation['valid']) {
+                    ProcessShopifyOrder::dispatch($order);
+                } else {
+                    // Configuración incompleta, registrar en logs y mantener en PENDING
+                    $orderLogService->logError($order, 'configuration_validation_failed', [
+                        'errors' => $validation['errors'],
+                        'details' => $validation['details'],
+                        'financial_status' => $financialStatus,
+                    ]);
+                }
+            }
 
-      if ($financialStatus === 'paid') {
-        ProcessShopifyOrder::dispatch($order);
+            return response()->json([
+                'message' => 'Order received successfully',
+                'order_id' => $order->id
+            ], 201);
+        } catch (Exception $e) {
+            DB::rollBack();
 
-        Log::info('Job de procesamiento despachado', [
-          'order_id' => $order->id,
-          'shopify_order_id' => $shopifyOrderId,
-        ]);
-      } else {
-        Log::info('Pedido no pagado, job no despachado', [
-          'order_id' => $order->id,
-          'shopify_order_id' => $shopifyOrderId,
-          'financial_status' => $financialStatus,
-        ]);
-      }
+            Log::error('Error procesando webhook de Shopify', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
 
-      return response()->json([
-        'message' => 'Order received successfully',
-        'order_id' => $order->id
-      ], 201);
-    } catch (Exception $e) {
-      DB::rollBack();
-
-      Log::error('Error procesando webhook de Shopify', [
-        'error' => $e->getMessage(),
-        'trace' => $e->getTraceAsString()
-      ]);
-
-      return response()->json([
-        'error' => 'Internal server error'
-      ], 500);
+            return response()->json([
+                'error' => 'Internal server error'
+            ], 500);
+        }
     }
-  }
 }

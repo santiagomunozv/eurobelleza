@@ -160,6 +160,7 @@ class SyncShopifyOrders extends Command
             ['Pedidos ya existentes en BD', $stats['orders_existing']],
             ['Pedidos faltantes', $stats['orders_missing']],
             ['Pedidos procesados', $isDryRun ? 'N/A (dry-run)' : $stats['orders_processed']],
+            ['Pedidos omitidos (sin config)', $isDryRun ? 'N/A (dry-run)' : ($stats['orders_skipped'] ?? 0)],
             ['Pedidos fallidos', $isDryRun ? 'N/A (dry-run)' : $stats['orders_failed']],
         ];
 
