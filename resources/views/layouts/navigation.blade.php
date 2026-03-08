@@ -24,6 +24,9 @@
                     <x-nav-link :href="route('admin.siesa.payment-gateways.index')" :active="request()->routeIs('admin.siesa.payment-gateways.*')">
                         {{ __('Métodos de Pago') }}
                     </x-nav-link>
+                    <x-nav-link :href="route('admin.siesa.warehouses.index')" :active="request()->routeIs('admin.siesa.warehouses.*')">
+                        {{ __('Ubicaciones') }}
+                    </x-nav-link>
                 </div>
             </div>
 
@@ -91,6 +94,9 @@
             </x-responsive-nav-link>
             <x-responsive-nav-link :href="route('admin.siesa.payment-gateways.index')" :active="request()->routeIs('admin.siesa.payment-gateways.*')">
                 {{ __('Métodos de Pago') }}
+            </x-responsive-nav-link>
+            <x-responsive-nav-link :href="route('admin.siesa.warehouses.index')" :active="request()->routeIs('admin.siesa.warehouses.*')">
+                {{ __('Ubicaciones') }}
             </x-responsive-nav-link>
         </div>
 

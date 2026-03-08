@@ -5,16 +5,21 @@ namespace App\Services\Siesa;
 use App\Models\Order;
 use App\Models\SiesaGeneralConfiguration;
 use App\Models\SiesaPaymentGatewayMapping;
+use App\Repositories\SiesaWarehouseMappingRepository;
 use App\Helpers\SiesaFileStructure;
 use App\Services\OrderLogService;
 
 class SiesaFlatFileGenerator
 {
     private OrderLogService $orderLogService;
+    private SiesaWarehouseMappingRepository $warehouseRepository;
 
-    public function __construct(OrderLogService $orderLogService)
-    {
+    public function __construct(
+        OrderLogService $orderLogService,
+        SiesaWarehouseMappingRepository $warehouseRepository
+    ) {
         $this->orderLogService = $orderLogService;
+        $this->warehouseRepository = $warehouseRepository;
     }
 
     /**
@@ -91,6 +96,9 @@ class SiesaFlatFileGenerator
         $orderNumber = (string)($orderData['order_number'] ?? '');
         $documentoAlterno = str_pad($orderNumber, 8, '0', STR_PAD_LEFT);
 
+        // Validar y obtener bodega y localización por fulfillment location_id
+        $warehouseMapping = $this->validateAndGetWarehouseMapping($order, $orderData);
+
         return [
             'orden_compra' => $orderNumber,
             'tipo_cliente' => $config->tipo_cliente->value,
@@ -98,8 +106,8 @@ class SiesaFlatFileGenerator
             'codigo_cliente' => $config->codigo_cliente,
             'sucursal' => $gatewayMapping->sucursal,
             'fecha_pedido' => SiesaFileStructure::formatDate($orderData['created_at'] ?? now()),
-            'bodega' => config('siesa.default_warehouse', '001'),
-            'localizacion' => config('siesa.default_location', '15'),
+            'bodega' => $warehouseMapping->bodega_code,
+            'localizacion' => $warehouseMapping->location_code,
             'observacion1' => $observations['observacion1'],
             'observacion2' => $observations['observacion2'],
             'codigo_vendedor' => $config->codigo_vendedor,
@@ -109,6 +117,55 @@ class SiesaFlatFileGenerator
             'condicion_pago' => $gatewayMapping->condicion_pago,
             'documento_alterno' => $documentoAlterno,
         ];
+    }
+
+    /**
+     * Valida y obtiene el mapping de bodega desde Shopify fulfillments
+     * Lanza excepción si no se encuentra configuración de bodega
+     *
+     * @param Order $order Pedido de Shopify
+     * @param array $orderData JSON del pedido de Shopify
+     * @return \App\Models\SiesaWarehouseMapping
+     * @throws \Exception
+     */
+    private function validateAndGetWarehouseMapping(Order $order, array $orderData): \App\Models\SiesaWarehouseMapping
+    {
+        // Validar que existan fulfillments
+        $fulfillments = $orderData['fulfillments'] ?? [];
+
+        if (empty($fulfillments)) {
+            $this->orderLogService->logError($order, 'warehouse_mapping_missing', [
+                'error' => 'El pedido no tiene fulfillments definidos',
+                'order_number' => $order->shopify_order_number
+            ]);
+            throw new \Exception("El pedido #{$order->shopify_order_number} no tiene información de fulfillments (ubicación de envío).");
+        }
+
+        // Validar que el primer fulfillment tenga location_id
+        if (!isset($fulfillments[0]['location_id'])) {
+            $this->orderLogService->logError($order, 'warehouse_location_id_missing', [
+                'error' => 'El fulfillment no tiene location_id definido',
+                'order_number' => $order->shopify_order_number,
+                'fulfillment' => $fulfillments[0] ?? null
+            ]);
+            throw new \Exception("El pedido #{$order->shopify_order_number} no tiene location_id en fulfillments.");
+        }
+
+        $locationId = $fulfillments[0]['location_id'];
+
+        // Buscar el mapping en base de datos
+        $warehouseMapping = $this->warehouseRepository->findByShopifyLocationId($locationId);
+
+        if (!$warehouseMapping) {
+            $this->orderLogService->logError($order, 'warehouse_mapping_not_found', [
+                'location_id' => $locationId,
+                'error' => 'No existe configuración de bodega para este location_id',
+                'order_number' => $order->shopify_order_number
+            ]);
+            throw new \Exception("No existe configuración de bodega para la ubicación de Shopify: {$locationId}. Por favor configure esta ubicación en el sistema.");
+        }
+
+        return $warehouseMapping;
     }
 
     /**

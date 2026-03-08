@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Admin\OrderController;
 use App\Http\Controllers\Admin\SiesaGeneralConfigurationController;
 use App\Http\Controllers\Admin\SiesaPaymentGatewayMappingController;
+use App\Http\Controllers\Admin\SiesaWarehouseMappingController;
 
 /*
 |--------------------------------------------------------------------------
@@ -37,6 +38,11 @@ Route::middleware(['auth'])->prefix('admin')->name('admin.')->group(function () 
     Route::resource('/siesa/payment-gateways', SiesaPaymentGatewayMappingController::class)
         ->except(['show'])
         ->names('siesa.payment-gateways');
+
+    // Ubicaciones de bodega SIESA
+    Route::resource('/siesa/warehouses', SiesaWarehouseMappingController::class)
+        ->except(['show'])
+        ->names('siesa.warehouses');
 });
 
 require __DIR__ . '/auth.php';
