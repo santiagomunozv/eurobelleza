@@ -189,8 +189,13 @@ class ShopifyOrderSyncService
     }
 
     /**
-     * Actualiza pedidos PENDING con datos frescos de Shopify y los reprocesa
-     * Útil para pedidos que llegaron con financial_status != paid pero luego se pagaron
+     * Actualiza pedidos PENDING con datos frescos de Shopify y los reprocesa si cumplen con la configuración
+     *
+     * Casos que cubre:
+     * - Pedidos que llegaron sin pagar y ahora están pagados
+     * - Pedidos que llegaron sin fulfillments y ahora los tienen
+     * - Pedidos que llegaron sin payment gateway mapping configurado y ahora existe
+     * - Cualquier actualización en el JSON que permita completar la configuración
      */
     private function updatePendingOrders(array $shopifyOrders): array
     {
@@ -221,25 +226,24 @@ class ShopifyOrderSyncService
                     continue;
                 }
 
-                // Verificar si el JSON cambió (especialmente financial_status)
-                $oldFinancialStatus = $order->order_json['financial_status'] ?? null;
-                $newFinancialStatus = $newOrderData['financial_status'] ?? null;
-
-                // Actualizar el JSON
+                // Actualizar el JSON con datos frescos de Shopify
                 $order->order_json = $newOrderData;
                 $order->save();
 
                 $updated++;
 
-                // Si cambió el financial_status a 'paid', validar configuración y despachar job
-                if ($oldFinancialStatus !== $newFinancialStatus && $newFinancialStatus === 'paid') {
+                // Si el pedido está pagado, validar configuración y intentar reprocesar
+                $financialStatus = $newOrderData['financial_status'] ?? null;
+
+                if ($financialStatus === 'paid') {
                     $validation = $this->configValidator->validate($newOrderData);
 
                     if ($validation['valid']) {
+                        // Ahora tiene configuración completa, reprocesar
                         ProcessShopifyOrder::dispatch($order);
                         $reprocessed++;
                     } else {
-                        // Configuración incompleta, mantener en PENDING
+                        // Aún falta configuración, mantener en PENDING
                         $this->orderLogService->logError($order, 'configuration_validation_failed', [
                             'errors' => $validation['errors'],
                             'details' => $validation['details'],
