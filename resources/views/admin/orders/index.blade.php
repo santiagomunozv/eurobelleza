@@ -107,6 +107,18 @@
                                 <th class="p-4 border-y border-blue-gray-100 bg-blue-gray-50/50">
                                     <p
                                         class="block font-sans text-sm antialiased font-normal leading-none text-blue-gray-900 opacity-70">
+                                        Estado Pago
+                                    </p>
+                                </th>
+                                <th class="p-4 border-y border-blue-gray-100 bg-blue-gray-50/50">
+                                    <p
+                                        class="block font-sans text-sm antialiased font-normal leading-none text-blue-gray-900 opacity-70">
+                                        Método de Pago
+                                    </p>
+                                </th>
+                                <th class="p-4 border-y border-blue-gray-100 bg-blue-gray-50/50">
+                                    <p
+                                        class="block font-sans text-sm antialiased font-normal leading-none text-blue-gray-900 opacity-70">
                                         Estado
                                     </p>
                                 </th>
@@ -171,6 +183,51 @@
                                         </p>
                                     </td>
                                     <td class="p-4 border-b border-blue-gray-50">
+                                        @php
+                                            $financialStatus = $order->order_json['financial_status'] ?? 'N/A';
+                                            $financialStatusColors = [
+                                                'paid' => 'bg-green-500/20 text-green-900',
+                                                'pending' => 'bg-yellow-500/20 text-yellow-900',
+                                                'authorized' => 'bg-blue-500/20 text-blue-900',
+                                                'partially_paid' => 'bg-orange-500/20 text-orange-900',
+                                                'refunded' => 'bg-purple-500/20 text-purple-900',
+                                                'voided' => 'bg-gray-500/20 text-gray-900',
+                                                'partially_refunded' => 'bg-purple-500/20 text-purple-900',
+                                            ];
+                                            $financialStatusLabels = [
+                                                'paid' => 'Pagado',
+                                                'pending' => 'Pendiente',
+                                                'authorized' => 'Autorizado',
+                                                'partially_paid' => 'Parcial',
+                                                'refunded' => 'Reembolsado',
+                                                'voided' => 'Anulado',
+                                                'partially_refunded' => 'Reemb. Parcial',
+                                            ];
+                                        @endphp
+                                        <div class="w-max">
+                                            <div
+                                                class="relative grid items-center px-2 py-1 font-sans text-xs font-bold uppercase rounded-md select-none whitespace-nowrap {{ $financialStatusColors[$financialStatus] ?? 'bg-gray-500/20 text-gray-900' }}">
+                                                <span>{{ $financialStatusLabels[$financialStatus] ?? $financialStatus }}</span>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td class="p-4 border-b border-blue-gray-50">
+                                        @php
+                                            $paymentGateways = $order->order_json['payment_gateway_names'] ?? [];
+                                            $firstPayment = !empty($paymentGateways) ? $paymentGateways[0] : 'N/A';
+                                        @endphp
+                                        <p
+                                            class="block font-sans text-sm antialiased font-normal leading-normal text-blue-gray-900">
+                                            {{ $firstPayment }}
+                                        </p>
+                                        @if (count($paymentGateways) > 1)
+                                            <p
+                                                class="block font-sans text-xs antialiased font-normal leading-normal text-blue-gray-900 opacity-70">
+                                                +{{ count($paymentGateways) - 1 }} más
+                                            </p>
+                                        @endif
+                                    </td>
+                                    <td class="p-4 border-b border-blue-gray-50">
                                         <div class="w-max">
                                             <div
                                                 class="relative grid items-center px-2 py-1 font-sans text-xs font-bold uppercase rounded-md select-none whitespace-nowrap {{ $statusColors[$order->status->value] ?? 'bg-gray-500/20 text-gray-900' }}">
@@ -213,7 +270,7 @@
                                 </tr>
                             @empty
                                 <tr>
-                                    <td colspan="6" class="p-4 text-center border-b border-blue-gray-50">
+                                    <td colspan="8" class="p-4 text-center border-b border-blue-gray-50">
                                         <p
                                             class="block font-sans text-sm antialiased font-normal leading-normal text-blue-gray-900 opacity-70">
                                             No se encontraron pedidos
