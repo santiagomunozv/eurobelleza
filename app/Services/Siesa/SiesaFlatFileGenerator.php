@@ -55,6 +55,19 @@ class SiesaFlatFileGenerator
             $lines[] = $this->generateLine($commonData, $lineItem, $config);
         }
 
+        // Agregar línea de envío si el valor es mayor a 0
+        $shippingAmount = floatval($orderData['total_shipping_price_set']['shop_money']['amount'] ?? 0);
+
+        if ($shippingAmount > 0) {
+            $shippingItem = [
+                'sku' => '900010',
+                'quantity' => 1,
+                'price' => $shippingAmount,
+                'discount_allocations' => [] // Sin descuentos en envío
+            ];
+            $lines[] = $this->generateLine($commonData, $shippingItem, $config, true);
+        }
+
         return implode("\n", $lines);
     }
 
@@ -174,9 +187,10 @@ class SiesaFlatFileGenerator
      * @param array $commonData Datos comunes del encabezado
      * @param array $lineItem Producto del pedido
      * @param SiesaGeneralConfiguration $config Configuración general de SIESA
+     * @param bool $isShipping Si es línea de envío (usa lista 999)
      * @return string Línea de 543 caracteres
      */
-    private function generateLine(array $commonData, array $lineItem, SiesaGeneralConfiguration $config): string
+    private function generateLine(array $commonData, array $lineItem, SiesaGeneralConfiguration $config, bool $isShipping = false): string
     {
         $line = '';
 
@@ -234,14 +248,20 @@ class SiesaFlatFileGenerator
         $line .= $config->unidad_precio->value;
 
         // 18) Posiciones 132-134: Lista de precio
-        $line .= SiesaFileStructure::padRight($config->lista_precio, SiesaFileStructure::LISTA_PRECIO_LENGTH);
+        $listaPrecio = $isShipping ? '999' : $config->lista_precio;
+        $line .= SiesaFileStructure::padRight($listaPrecio, SiesaFileStructure::LISTA_PRECIO_LENGTH);
 
         // 19) Posiciones 135-136: Lista de descuento
         $line .= SiesaFileStructure::padRight('', SiesaFileStructure::LISTA_DESCUENTO_LENGTH);
 
         // 20) Posiciones 137-148: Precio unitario
-        $price = $lineItem['price'] ?? '0.00';
-        $line .= SiesaFileStructure::formatPrice($price);
+        // Calcular precio con descuento aplicado (si existe)
+        $basePrice = floatval($lineItem['price'] ?? 0);
+        $discountAllocations = $lineItem['discount_allocations'] ?? [];
+        $discountAmount = !empty($discountAllocations) ? floatval($discountAllocations[0]['amount'] ?? 0) : 0;
+        $finalPrice = $basePrice - $discountAmount;
+
+        $line .= SiesaFileStructure::formatPrice($finalPrice);
 
         // 21) Posiciones 149-152: Descuento línea 1
         $line .= SiesaFileStructure::formatPercentage(0);
