@@ -1,3 +1,407 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+    :root {
+        --color-primary: #1c4789;
+        --color-primary-hover: #163a71;
+        --color-primary-soft: #eaf1fb;
+        --color-app-bg: #f5f7fb;
+        --color-surface: #ffffff;
+        --color-border: #d6dfee;
+        --color-text: #0f172a;
+        --color-text-muted: #475569;
+        --color-success: #15803d;
+        --color-warning: #b45309;
+        --color-danger: #b91c1c;
+    }
+
+    body {
+        color: var(--color-text);
+        background-color: var(--color-app-bg);
+    }
+}
+
+@layer components {
+    .ui-page {
+        @apply py-8;
+    }
+
+    .ui-page-lg {
+        @apply py-12;
+    }
+
+    .ui-container {
+        @apply mx-auto max-w-7xl px-4 sm:px-6 lg:px-8;
+    }
+
+    .ui-container-sm {
+        @apply mx-auto max-w-3xl px-4 sm:px-6 lg:px-8;
+    }
+
+    .ui-container-md {
+        @apply mx-auto max-w-4xl px-4 sm:px-6 lg:px-8;
+    }
+
+    .ui-header-row {
+        @apply flex items-center justify-between;
+    }
+
+    .ui-title-page {
+        @apply text-xl font-semibold leading-tight;
+        color: var(--color-text);
+    }
+
+    .ui-section-title {
+        @apply text-lg font-semibold;
+        color: var(--color-text);
+    }
+
+    .ui-section-subtitle {
+        @apply text-sm;
+        color: var(--color-text-muted);
+    }
+
+    .ui-card-body {
+        @apply border-b p-6;
+        border-color: var(--color-border);
+    }
+
+    .ui-form-actions {
+        @apply mt-8 flex items-center justify-end space-x-3;
+    }
+
+    .ui-text-muted {
+        color: var(--color-text-muted);
+    }
+
+    .ui-link {
+        @apply text-sm transition;
+        color: #1c4789;
+    }
+
+    .ui-link:hover {
+        color: #163a71;
+    }
+
+    .ui-link-underline {
+        @apply underline text-sm transition;
+        color: var(--color-text-muted);
+    }
+
+    .ui-link-underline:hover {
+        color: var(--color-text);
+    }
+
+    .ui-card {
+        @apply rounded-xl border bg-white shadow-sm;
+        border-color: var(--color-border);
+    }
+
+    .ui-input {
+        @apply w-full rounded-lg border px-3 py-2.5 text-sm;
+        @apply focus:outline-none focus:ring-2 focus:ring-offset-0;
+        border-color: var(--color-border);
+    }
+
+    .ui-input-sm {
+        @apply mt-1 block w-full rounded-md border px-3 py-2 text-sm shadow-sm;
+        border-color: #d1d5db;
+    }
+
+    .ui-input-sm:focus {
+        border-color: #1c4789;
+        --tw-ring-color: #1c4789;
+    }
+
+    .ui-input:focus {
+        border-color: var(--color-primary);
+        box-shadow: 0 0 0 2px var(--color-primary-soft);
+    }
+
+    .ui-label {
+        @apply mb-2 block text-sm font-medium;
+        color: var(--color-text);
+    }
+
+    .ui-help {
+        @apply mt-1 text-xs;
+        color: var(--color-text-muted);
+    }
+
+    .ui-help-sm {
+        @apply mt-1 text-sm text-gray-500;
+    }
+
+    .ui-error {
+        @apply mt-1 text-sm text-red-600;
+    }
+
+    .ui-btn {
+        @apply inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-semibold transition;
+        @apply focus:outline-none focus:ring-2 focus:ring-offset-2;
+    }
+
+    .ui-btn-primary {
+        @apply ui-btn text-white;
+        background-color: #1c4789;
+    }
+
+    .ui-btn-primary:hover {
+        background-color: #163a71;
+    }
+
+    .ui-btn-primary:focus {
+        --tw-ring-color: var(--color-primary);
+    }
+
+    .ui-btn-secondary {
+        @apply ui-btn border bg-white;
+        border-color: #1c4789;
+        color: #1c4789;
+    }
+
+    .ui-btn-secondary:hover {
+        background-color: var(--color-primary-soft);
+    }
+
+    .ui-btn-secondary:focus {
+        --tw-ring-color: var(--color-primary);
+    }
+
+    .ui-btn-neutral {
+        @apply ui-btn border border-gray-300 bg-white text-gray-700;
+    }
+
+    .ui-btn-neutral:hover {
+        @apply bg-gray-50;
+    }
+
+    .ui-btn-neutral:focus {
+        --tw-ring-color: #64748b;
+    }
+
+    .ui-badge {
+        @apply inline-flex items-center rounded-md px-2 py-1 text-xs font-semibold uppercase;
+    }
+
+    .ui-alert {
+        @apply mb-4 rounded-lg border px-4 py-3 text-sm;
+    }
+
+    .ui-alert-success {
+        @apply ui-alert border-green-200 bg-green-50 text-green-700;
+    }
+
+    .ui-alert-error {
+        @apply ui-alert border-red-200 bg-red-50 text-red-700;
+    }
+
+    .ui-form-grid {
+        @apply grid grid-cols-12 gap-4;
+    }
+
+    .ui-form-col {
+        @apply col-span-12 md:col-span-6 xl:col-span-4;
+    }
+
+    .ui-table-wrap {
+        @apply overflow-x-auto;
+    }
+
+    .ui-table {
+        @apply min-w-full divide-y divide-gray-200;
+    }
+
+    .ui-table-head {
+        @apply bg-gray-50;
+    }
+
+    .ui-table-th {
+        @apply px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500;
+    }
+
+    .ui-table-th-right {
+        @apply ui-table-th text-right;
+    }
+
+    .ui-table-body {
+        @apply divide-y divide-gray-200 bg-white;
+    }
+
+    .ui-table-td {
+        @apply whitespace-nowrap px-6 py-4 text-sm text-gray-500;
+    }
+
+    .ui-table-td-strong {
+        @apply whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900;
+    }
+
+    .ui-action-link {
+        @apply text-sm font-medium text-[#1c4789] transition hover:text-[#163a71];
+    }
+
+    .ui-action-danger {
+        @apply text-sm font-medium text-red-600 transition hover:text-red-900;
+    }
+
+    .ui-badge-info {
+        @apply rounded-lg border border-blue-200 bg-blue-50 p-4;
+    }
+
+    .ui-table-compact {
+        @apply min-w-full text-left text-sm;
+    }
+
+    .ui-table-compact-head {
+        @apply sticky top-0 z-10;
+        background-color: var(--color-primary-soft);
+        color: var(--color-text-muted);
+    }
+
+    .ui-table-compact-th {
+        @apply px-4 py-3 font-semibold;
+    }
+
+    .ui-table-compact-th-right {
+        @apply ui-table-compact-th text-right;
+    }
+
+    .ui-table-compact-body {
+        @apply divide-y bg-white;
+        border-color: var(--color-border);
+    }
+
+    .ui-table-compact-td {
+        @apply px-4 py-3;
+    }
+
+    .ui-table-compact-td-right {
+        @apply ui-table-compact-td text-right;
+    }
+
+    .ui-icon-btn {
+        @apply inline-flex h-9 w-9 items-center justify-center rounded-lg border transition;
+        border-color: var(--color-border);
+        color: #1c4789;
+    }
+
+    .ui-icon-btn:hover {
+        background-color: var(--color-primary-soft);
+    }
+
+    .ui-orders-filter-grid {
+        @apply grid gap-3;
+        grid-template-columns: 1fr;
+    }
+
+    @media (min-width: 768px) {
+        .ui-orders-filter-grid {
+            grid-template-columns: 1fr 220px auto auto;
+        }
+    }
+
+    .ui-orders-filter-action {
+        @apply flex items-end;
+    }
+
+    .ui-auth-logo {
+        @apply h-12 w-auto rounded-lg bg-[#1c4789] p-2;
+    }
+
+    .ui-auth-note {
+        @apply mb-4 text-sm text-gray-600;
+    }
+
+    .ui-auth-actions {
+        @apply mt-4 flex items-center justify-end;
+    }
+
+    .ui-auth-actions-between {
+        @apply mt-4 flex items-center justify-between;
+    }
+
+    .ui-field-gap {
+        @apply mt-4;
+    }
+
+    .ui-auth-status {
+        @apply mb-4;
+    }
+
+    .ui-auth-remember-text {
+        @apply ml-2 text-sm text-gray-600;
+    }
+
+    .ui-auth-success {
+        @apply mb-4 text-sm font-medium text-green-600;
+    }
+
+    .ui-error-title {
+        @apply text-sm font-medium text-red-700;
+    }
+
+    .ui-error-list {
+        @apply mt-2 list-inside list-disc text-sm text-red-700;
+    }
+
+    .ui-auth-check {
+        @apply inline-flex items-center;
+    }
+
+    .ui-checkbox {
+        @apply rounded border shadow-sm focus:ring;
+        border-color: var(--color-border);
+        color: #1c4789;
+    }
+
+    .ui-checkbox:focus {
+        border-color: #1c4789;
+        --tw-ring-color: var(--color-primary-soft);
+    }
+
+    .ui-auth-link {
+        @apply text-sm underline transition;
+        color: var(--color-text-muted);
+    }
+
+    .ui-auth-link:hover {
+        color: var(--color-text);
+    }
+
+    .ui-stats-grid {
+        @apply grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4;
+    }
+
+    .ui-stat-card {
+        @apply rounded-xl border p-4;
+    }
+
+    .ui-stat-title {
+        @apply text-sm font-medium;
+    }
+
+    .ui-stat-value {
+        @apply mt-2 text-3xl font-bold;
+        color: var(--color-text);
+    }
+
+    .ui-kpi-grid {
+        @apply mt-4 grid grid-cols-1 gap-4 md:grid-cols-3;
+    }
+
+    .ui-kpi-card {
+        @apply ui-card p-4;
+    }
+
+    .ui-kpi-label {
+        @apply text-sm;
+        color: var(--color-text-muted);
+    }
+
+    .ui-kpi-value {
+        @apply mt-1 text-2xl font-bold;
+        color: var(--color-text);
+    }
+}

@@ -11,7 +11,16 @@ module.exports = {
     theme: {
         extend: {
             fontFamily: {
-                sans: ['Nunito', ...defaultTheme.fontFamily.sans],
+                sans: ['Roboto', ...defaultTheme.fontFamily.sans],
+            },
+            colors: {
+                brand: {
+                    DEFAULT: '#1C4789',
+                    50: '#EAF1FB',
+                    100: '#D6E3F5',
+                    600: '#1C4789',
+                    700: '#163A71',
+                },
             },
         },
     },

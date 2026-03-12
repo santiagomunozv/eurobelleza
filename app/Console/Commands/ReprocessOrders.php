@@ -12,8 +12,8 @@ use Illuminate\Console\Command;
 class ReprocessOrders extends Command
 {
     protected $signature = 'orders:reprocess
-                            {--limit=10 : Cantidad de pedidos a procesar}
-                            {--status=pending : Estado de los pedidos (pending, failed, completed)}
+                            {--limit= : Cantidad de pedidos a procesar (si no se envía, procesa todos)}
+                            {--status=pending : Estado de los pedidos (pending, processing, failed, completed, all)}
                             {--validate : Validar configuración antes de despachar}';
 
     protected $description = 'Reprocesa pedidos existentes despachando jobs a la cola';
@@ -27,26 +27,38 @@ class ReprocessOrders extends Command
 
     public function handle(): int
     {
-        $limit = (int) $this->option('limit');
+        $limit = $this->option('limit') !== null ? (int) $this->option('limit') : null;
         $status = $this->option('status');
         $shouldValidate = $this->option('validate');
 
         $this->info("🔄 Reprocesando pedidos...");
         $this->newLine();
 
-        try {
-            $statusEnum = OrderStatusEnum::from($status);
-        } catch (\ValueError $e) {
-            $this->error("❌ Estado inválido: {$status}");
-            $this->error("   Estados válidos: pending, processing, completed, failed");
+        if ($limit !== null && $limit <= 0) {
+            $this->error("❌ El valor de --limit debe ser mayor a 0");
             return self::FAILURE;
         }
 
-        // Obtener pedidos
-        $orders = Order::where('status', $statusEnum)
-            ->orderBy('id')
-            ->limit($limit)
-            ->get();
+        $query = Order::query()->orderBy('id');
+
+        if ($status === 'all') {
+            $query->where('status', '!=', OrderStatusEnum::COMPLETED->value);
+        } else {
+            try {
+                $statusEnum = OrderStatusEnum::from($status);
+                $query->where('status', $statusEnum->value);
+            } catch (\ValueError $e) {
+                $this->error("❌ Estado inválido: {$status}");
+                $this->error("   Estados válidos: pending, processing, completed, failed, all");
+                return self::FAILURE;
+            }
+        }
+
+        if ($limit !== null) {
+            $query->limit($limit);
+        }
+
+        $orders = $query->get();
 
         if ($orders->isEmpty()) {
             $this->warn("⚠️  No se encontraron pedidos con estado: {$status}");
@@ -83,8 +95,29 @@ class ReprocessOrders extends Command
                     }
                 }
 
-                // Despachar job
-                ProcessShopifyOrder::dispatch($order);
+                if ($order->status->value === OrderStatusEnum::COMPLETED->value) {
+                    $skipped++;
+                    $errors[] = "Pedido #{$order->shopify_order_number}: está COMPLETED y no se reprocesa";
+                    $progressBar->advance();
+                    continue;
+                }
+
+                if ($order->status->value !== OrderStatusEnum::PENDING->value) {
+                    $previousStatus = $order->status->value;
+
+                    $order->update([
+                        'status' => OrderStatusEnum::PENDING->value,
+                        'error_message' => null,
+                        'processed_at' => null,
+                        'attempts' => 0,
+                    ]);
+
+                    $this->orderLogService->logInfo($order, 'Pedido movido a PENDING para reproceso manual', [
+                        'previous_status' => $previousStatus,
+                    ]);
+                }
+
+                ProcessShopifyOrder::dispatch($order->fresh());
                 $dispatched++;
             } catch (\Exception $e) {
                 $skipped++;

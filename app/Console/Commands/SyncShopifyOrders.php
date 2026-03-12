@@ -160,15 +160,15 @@ class SyncShopifyOrders extends Command
             ['Pedidos ya existentes en BD', $stats['orders_existing']],
             ['Pedidos faltantes', $stats['orders_missing']],
             ['Pedidos procesados', $isDryRun ? 'N/A (dry-run)' : $stats['orders_processed']],
-            ['Pedidos omitidos (sin config)', $isDryRun ? 'N/A (dry-run)' : ($stats['orders_skipped'] ?? 0)],
+            ['Pedidos omitidos (sin config/no pagados)', $isDryRun ? 'N/A (dry-run)' : ($stats['orders_skipped'] ?? 0)],
             ['Pedidos fallidos', $isDryRun ? 'N/A (dry-run)' : $stats['orders_failed']],
         ];
 
-        // Agregar estadísticas de PENDING si hay datos
-        if (!$isDryRun && ($stats['pending_updated'] > 0 || $stats['pending_reprocessed'] > 0)) {
+        // Agregar estadísticas de no completados si hay datos
+        if (!$isDryRun && ($stats['non_completed_updated'] > 0 || $stats['non_completed_reprocessed'] > 0)) {
             $rows[] = ['---', '---'];
-            $rows[] = ['Pedidos PENDING actualizados', $stats['pending_updated']];
-            $rows[] = ['Pedidos PENDING reprocesados', $stats['pending_reprocessed']];
+            $rows[] = ['Pedidos no completados actualizados', $stats['non_completed_updated']];
+            $rows[] = ['Pedidos no completados reprocesados', $stats['non_completed_reprocessed']];
         }
 
         $this->table(['Métrica', 'Cantidad'], $rows);
@@ -184,7 +184,7 @@ class SyncShopifyOrders extends Command
 
         // Mensaje final
         $this->newLine();
-        if ($stats['orders_missing'] === 0 && $stats['pending_updated'] === 0) {
+        if ($stats['orders_missing'] === 0 && $stats['non_completed_updated'] === 0) {
             $this->info('✅ Todos los pedidos están sincronizados');
         } elseif ($isDryRun) {
             if ($stats['orders_missing'] > 0) {
@@ -196,8 +196,8 @@ class SyncShopifyOrders extends Command
             if ($stats['orders_processed'] > 0) {
                 $messages[] = "{$stats['orders_processed']} pedidos nuevos procesados";
             }
-            if ($stats['pending_reprocessed'] > 0) {
-                $messages[] = "{$stats['pending_reprocessed']} pedidos PENDING reprocesados";
+            if ($stats['non_completed_reprocessed'] > 0) {
+                $messages[] = "{$stats['non_completed_reprocessed']} pedidos no completados reprocesados";
             }
             if (!empty($messages)) {
                 $this->info('✅ Sincronización completada: ' . implode(', ', $messages));

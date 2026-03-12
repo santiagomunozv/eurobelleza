@@ -143,30 +143,13 @@ class SiesaFlatFileGenerator
      */
     private function validateAndGetWarehouseMapping(Order $order, array $orderData): \App\Models\SiesaWarehouseMapping
     {
-        // Validar que existan fulfillments
         $fulfillments = $orderData['fulfillments'] ?? [];
+        $locationId = $fulfillments[0]['location_id'] ?? null;
 
-        if (empty($fulfillments)) {
-            $this->orderLogService->logError($order, 'warehouse_mapping_missing', [
-                'error' => 'El pedido no tiene fulfillments definidos',
-                'order_number' => $order->shopify_order_number
-            ]);
-            throw new \Exception("El pedido #{$order->shopify_order_number} no tiene información de fulfillments (ubicación de envío).");
+        if (!$locationId) {
+            return $this->resolveFallbackWarehouseMapping($order, $fulfillments);
         }
 
-        // Validar que el primer fulfillment tenga location_id
-        if (!isset($fulfillments[0]['location_id'])) {
-            $this->orderLogService->logError($order, 'warehouse_location_id_missing', [
-                'error' => 'El fulfillment no tiene location_id definido',
-                'order_number' => $order->shopify_order_number,
-                'fulfillment' => $fulfillments[0] ?? null
-            ]);
-            throw new \Exception("El pedido #{$order->shopify_order_number} no tiene location_id en fulfillments.");
-        }
-
-        $locationId = $fulfillments[0]['location_id'];
-
-        // Buscar el mapping en base de datos
         $warehouseMapping = $this->warehouseRepository->findByShopifyLocationId($locationId);
 
         if (!$warehouseMapping) {
@@ -179,6 +162,34 @@ class SiesaFlatFileGenerator
         }
 
         return $warehouseMapping;
+    }
+
+    private function resolveFallbackWarehouseMapping(Order $order, array $fulfillments): \App\Models\SiesaWarehouseMapping
+    {
+        $mappings = $this->warehouseRepository->all();
+
+        if ($mappings->count() === 1) {
+            $defaultMapping = $mappings->first();
+            $this->orderLogService->logWarning($order, 'warehouse_mapping_fallback_single_mapping', [
+                'warning' => 'Pedido sin fulfillments/location_id, se usa la única bodega configurada',
+                'shopify_location_id' => $defaultMapping->shopify_location_id,
+                'bodega_code' => $defaultMapping->bodega_code,
+                'location_code' => $defaultMapping->location_code,
+            ]);
+
+            return $defaultMapping;
+        }
+
+        $this->orderLogService->logError($order, 'warehouse_mapping_missing', [
+            'error' => 'Pedido sin fulfillments/location_id y no hay una bodega única para fallback',
+            'order_number' => $order->shopify_order_number,
+            'configured_mappings' => $mappings->count(),
+            'fulfillments' => $fulfillments,
+        ]);
+
+        throw new \Exception(
+            "El pedido #{$order->shopify_order_number} no tiene location_id en fulfillments"
+        );
     }
 
     /**

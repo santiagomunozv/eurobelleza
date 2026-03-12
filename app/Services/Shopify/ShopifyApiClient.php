@@ -98,6 +98,32 @@ class ShopifyApiClient
     }
 
     /**
+     * Obtiene un pedido específico de Shopify por ID
+     *
+     * @param string $shopifyOrderId
+     * @return array|null
+     * @throws \Exception
+     */
+    public function getOrderById(string $shopifyOrderId): ?array
+    {
+        $this->validateConfiguration();
+
+        try {
+            $response = $this->makeRequest('GET', "orders/{$shopifyOrderId}.json", [
+                'status' => 'any',
+            ]);
+
+            return $response['order'] ?? null;
+        } catch (\Exception $e) {
+            Log::error('Error obteniendo pedido de Shopify por ID', [
+                'shopify_order_id' => $shopifyOrderId,
+                'error' => $e->getMessage(),
+            ]);
+            throw $e;
+        }
+    }
+
+    /**
      * Realiza una petición a la API con retry logic
      */
     private function makeRequest(string $method, string $endpoint, array $params = [], int $attempt = 1): array

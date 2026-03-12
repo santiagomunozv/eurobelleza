@@ -444,6 +444,20 @@ docker exec eurobelleza-back php artisan queue:flush
 
 ## Comandos Artisan
 
+### Matriz Rápida de Uso (Actualizada)
+
+| Escenario | Comando recomendado | Ejemplo | Cuándo usar |
+|---|---|---|---|
+| Sincronización diaria normal | `shopify:sync-orders` | `docker exec eurobelleza-back php artisan shopify:sync-orders` | Operación estándar diaria (también corre por schedule a las 02:00 America/Bogota). |
+| Reproceso masivo de no completados | `orders:reprocess --status=all --validate` | `docker exec eurobelleza-back php artisan orders:reprocess --status=all --validate` | Reintentar pendientes/fallidos/procesando con validación previa. |
+| Reproceso masivo solo fallidos | `orders:reprocess --status=failed --validate` | `docker exec eurobelleza-back php artisan orders:reprocess --status=failed --validate` | Incidentes donde quieres atacar solo fallidos. |
+| Reproceso controlado por volumen | `orders:reprocess --status=all --limit=N --validate` | `docker exec eurobelleza-back php artisan orders:reprocess --status=all --limit=100 --validate` | Evitar saturar cola al reprocesar lotes grandes. |
+| Refrescar pedidos puntuales desde Shopify | `orders:refresh --ids=...` | `docker exec eurobelleza-back php artisan orders:refresh --ids=120 --ids=121 --reprocess` | Soporte puntual/tickets específicos. |
+| Refrescar todos no completados | `orders:refresh --non-completed --reprocess` | `docker exec eurobelleza-back php artisan orders:refresh --non-completed --reprocess` | Sospecha de JSON desactualizado/incompleto en muchos pedidos. |
+| Refrescar pendientes sin fulfillments | `orders:refresh --pending-without-fulfillments --reprocess` | `docker exec eurobelleza-back php artisan orders:refresh --pending-without-fulfillments --reprocess` | Caso específico de pedidos sin `fulfillments/location_id`. |
+
+> Nota: `orders:refresh` es principalmente una herramienta de soporte/diagnóstico; para operación diaria se recomienda `shopify:sync-orders` + `orders:reprocess`.
+
 ### 1. SyncShopifyOrders (Sincronización Diaria)
 
 **Archivo:** `app/Console/Commands/SyncShopifyOrders.php`
