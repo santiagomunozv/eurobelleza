@@ -22,7 +22,7 @@ class UpdateSiesaPaymentGatewayMappingRequest extends FormRequest
      */
     public function rules(): array
     {
-        $mappingId = $this->route('mapping');
+        $mappingId = $this->route('payment_gateway');
 
         return [
             'payment_gateway_name' => [
