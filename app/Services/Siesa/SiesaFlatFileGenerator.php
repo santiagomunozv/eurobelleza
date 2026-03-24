@@ -259,7 +259,7 @@ class SiesaFlatFileGenerator
         $line .= $config->unidad_precio->value;
 
         // 18) Posiciones 132-134: Lista de precio
-        $listaPrecio = $isShipping ? '999' : $config->lista_precio;
+        $listaPrecio = $isShipping ? '900' : $config->lista_precio;
         $line .= SiesaFileStructure::padRight($listaPrecio, SiesaFileStructure::LISTA_PRECIO_LENGTH);
 
         // 19) Posiciones 135-136: Lista de descuento

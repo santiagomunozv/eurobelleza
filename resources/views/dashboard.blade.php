@@ -60,23 +60,30 @@
                                         'processing' => 'bg-blue-100 text-blue-800',
                                         'completed' => 'bg-green-100 text-green-800',
                                         'failed' => 'bg-red-100 text-red-800',
+                                        'sent_to_siesa' => 'bg-purple-100 text-purple-800',
+                                        'siesa_error' => 'bg-orange-100 text-orange-800',
                                     ];
                                     $statusLabels = [
                                         'pending' => 'Pendiente',
                                         'processing' => 'Procesando',
                                         'completed' => 'Completado',
                                         'failed' => 'Fallido',
+                                        'sent_to_siesa' => 'Enviado a SIESA',
+                                        'siesa_error' => 'Error SIESA',
                                     ];
                                 @endphp
                                 <tr>
                                     <td class="ui-table-td-strong">#{{ $order->shopify_order_number }}</td>
                                     <td class="ui-table-td">
                                         <p class="text-gray-800">{{ $order->customer_name ?: 'Sin nombre' }}</p>
-                                        <p class="text-xs text-gray-500">{{ $order->customer_email ?: 'Sin correo' }}</p>
+                                        <p class="text-xs text-gray-500">{{ $order->customer_email ?: 'Sin correo' }}
+                                        </p>
                                     </td>
-                                    <td class="ui-table-td-strong">${{ number_format($order->total_price, 0, '', '.') }}</td>
+                                    <td class="ui-table-td-strong">
+                                        ${{ number_format($order->total_price, 0, '', '.') }}</td>
                                     <td class="ui-table-td">
-                                        <span class="ui-badge {{ $statusClasses[$order->status->value] ?? 'bg-gray-100 text-gray-700' }}">
+                                        <span
+                                            class="ui-badge {{ $statusClasses[$order->status->value] ?? 'bg-gray-100 text-gray-700' }}">
                                             {{ $statusLabels[$order->status->value] ?? $order->status->value }}
                                         </span>
                                     </td>

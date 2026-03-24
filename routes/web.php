@@ -36,6 +36,8 @@ Route::get('/dashboard', function () {
         OrderStatusEnum::PROCESSING->value => ['label' => 'Procesando', 'color' => 'text-blue-700', 'bg' => 'bg-blue-50', 'border' => 'border-blue-200'],
         OrderStatusEnum::COMPLETED->value => ['label' => 'Completados', 'color' => 'text-green-700', 'bg' => 'bg-green-50', 'border' => 'border-green-200'],
         OrderStatusEnum::FAILED->value => ['label' => 'Fallidos', 'color' => 'text-red-700', 'bg' => 'bg-red-50', 'border' => 'border-red-200'],
+        OrderStatusEnum::SENT_TO_SIESA->value => ['label' => 'Enviados a SIESA', 'color' => 'text-purple-700', 'bg' => 'bg-purple-50', 'border' => 'border-purple-200'],
+        OrderStatusEnum::SIESA_ERROR->value => ['label' => 'Error SIESA', 'color' => 'text-orange-700', 'bg' => 'bg-orange-50', 'border' => 'border-orange-200'],
     ];
 
     $statsByStatus = collect(OrderStatusEnum::cases())

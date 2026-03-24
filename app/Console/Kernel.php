@@ -24,6 +24,11 @@ class Kernel extends ConsoleKernel
         $schedule->command('orders:refresh --non-completed --days=30 --reprocess')
             ->dailyAt('03:00')
             ->timezone('America/Bogota');
+
+        // Revisión de errores SIESA cada 30 minutos
+        $schedule->command('siesa:check-errors')
+            ->everyThirtyMinutes()
+            ->timezone('America/Bogota');
     }
 
     /**

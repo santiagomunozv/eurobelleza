@@ -1,0 +1,16 @@
++---------------------------------------------------------------------------------------------------------------------------------------+
+| UNO - VER 8.5.                                          Cliente Pruebas.                                           FECHA : 2026/03/12 |
+| UCVE104F.P01                            ** GENERACION DE PEDIDOS - INCONSISTENCIAS **                              HORA  :  5:10 PM   |
+|                                                                                                                    PAGINA:        1   |
+|                                                                                                                                       |
++---------------------------------------------------------------------------------------------------------------------------------------+
+|PEDIDO     CAMPO_INCONSISTENTE INCONSISTENCIA                                                                                          |
++---------------------------------------------------------------------------------------------------------------------------------------+
+ 0000062618 222222222222 02     CLIENTE YA TIENE ESTE PEDIDO
+ 0000062618 222222222222 02     CLIENTE YA TIENE ESTE PEDIDO
+ 0000062618 222222222222 02     CLIENTE YA TIENE ESTE PEDIDO
+*0000062618 900010              ITEM LIQUIDADO CON OTRA LISTA PRECIOFLETES GRAVADOS               Lista Cliente: 012 Lista Pedido : 999
+ 0000062618 222222222222 02     CLIENTE YA TIENE ESTE PEDIDO
+ * = Advertencias que no paran el proceso
+
+-------------------------------------------------------------- FIN REPORTE --------------------------------------------------------------

@@ -13,7 +13,7 @@ class ReprocessOrders extends Command
 {
     protected $signature = 'orders:reprocess
                             {--limit= : Cantidad de pedidos a procesar (si no se envía, procesa todos)}
-                            {--status=pending : Estado de los pedidos (pending, processing, failed, completed, all)}
+                            {--status=pending : Estado de los pedidos (pending, processing, failed, completed, sent_to_siesa, siesa_error, all)}
                             {--validate : Validar configuración antes de despachar}';
 
     protected $description = 'Reprocesa pedidos existentes despachando jobs a la cola';
@@ -42,14 +42,14 @@ class ReprocessOrders extends Command
         $query = Order::query()->orderBy('id');
 
         if ($status === 'all') {
-            $query->where('status', '!=', OrderStatusEnum::COMPLETED->value);
+            $query->whereNotIn('status', [OrderStatusEnum::COMPLETED->value, OrderStatusEnum::SENT_TO_SIESA->value]);
         } else {
             try {
                 $statusEnum = OrderStatusEnum::from($status);
                 $query->where('status', $statusEnum->value);
             } catch (\ValueError $e) {
                 $this->error("❌ Estado inválido: {$status}");
-                $this->error("   Estados válidos: pending, processing, completed, failed, all");
+                $this->error("   Estados válidos: pending, processing, completed, failed, sent_to_siesa, siesa_error, all");
                 return self::FAILURE;
             }
         }
@@ -95,9 +95,9 @@ class ReprocessOrders extends Command
                     }
                 }
 
-                if ($order->status->value === OrderStatusEnum::COMPLETED->value) {
+                if (in_array($order->status->value, [OrderStatusEnum::COMPLETED->value, OrderStatusEnum::SENT_TO_SIESA->value])) {
                     $skipped++;
-                    $errors[] = "Pedido #{$order->shopify_order_number}: está COMPLETED y no se reprocesa";
+                    $errors[] = "Pedido #{$order->shopify_order_number}: está {$order->status->value} y no se reprocesa";
                     $progressBar->advance();
                     continue;
                 }

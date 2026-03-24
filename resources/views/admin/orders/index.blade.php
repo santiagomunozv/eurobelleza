@@ -12,6 +12,8 @@
             'processing' => 'Procesando',
             'completed' => 'Completado',
             'failed' => 'Fallido',
+            'sent_to_siesa' => 'Enviado a SIESA',
+            'siesa_error' => 'Error SIESA',
         ];
     @endphp
 
@@ -38,17 +40,26 @@
                 <form method="GET" action="{{ route('admin.orders.index') }}" class="ui-orders-filter-grid">
                     <div>
                         <label for="search" class="ui-label">Buscar pedido</label>
-                        <input id="search" type="text" name="search" value="{{ request('search') }}" class="ui-input" placeholder="Número de pedido o ID de Shopify">
+                        <input id="search" type="text" name="search" value="{{ request('search') }}"
+                            class="ui-input" placeholder="Número de pedido o ID de Shopify">
                     </div>
 
                     <div>
                         <label for="status" class="ui-label">Estado</label>
                         <select id="status" name="status" class="ui-input">
                             <option value="">Todos los estados</option>
-                            <option value="pending" {{ request('status') == 'pending' ? 'selected' : '' }}>Pendiente</option>
-                            <option value="processing" {{ request('status') == 'processing' ? 'selected' : '' }}>Procesando</option>
-                            <option value="completed" {{ request('status') == 'completed' ? 'selected' : '' }}>Completado</option>
-                            <option value="failed" {{ request('status') == 'failed' ? 'selected' : '' }}>Fallido</option>
+                            <option value="pending" {{ request('status') == 'pending' ? 'selected' : '' }}>Pendiente
+                            </option>
+                            <option value="processing" {{ request('status') == 'processing' ? 'selected' : '' }}>
+                                Procesando</option>
+                            <option value="completed" {{ request('status') == 'completed' ? 'selected' : '' }}>
+                                Completado</option>
+                            <option value="sent_to_siesa" {{ request('status') == 'sent_to_siesa' ? 'selected' : '' }}>
+                                Enviado a SIESA</option>
+                            <option value="siesa_error" {{ request('status') == 'siesa_error' ? 'selected' : '' }}>Error
+                                SIESA</option>
+                            <option value="failed" {{ request('status') == 'failed' ? 'selected' : '' }}>Fallido
+                            </option>
                         </select>
                     </div>
 
@@ -57,7 +68,8 @@
                     </div>
 
                     <div class="ui-orders-filter-action">
-                        <a href="{{ route('admin.orders.index') }}" class="ui-btn-secondary w-full md:w-auto {{ $hasFilters ? '' : 'invisible' }}">
+                        <a href="{{ route('admin.orders.index') }}"
+                            class="ui-btn-secondary w-full md:w-auto {{ $hasFilters ? '' : 'invisible' }}">
                             Limpiar
                         </a>
                     </div>
@@ -82,7 +94,8 @@
 
             <section class="ui-card overflow-hidden">
                 <div class="border-b border-[var(--color-border)] px-5 py-3 ui-section-subtitle">
-                    Mostrando {{ $orders->firstItem() ?? 0 }} a {{ $orders->lastItem() ?? 0 }} de {{ $orders->total() }} pedidos
+                    Mostrando {{ $orders->firstItem() ?? 0 }} a {{ $orders->lastItem() ?? 0 }} de
+                    {{ $orders->total() }} pedidos
                 </div>
 
                 <div class="ui-table-wrap">
@@ -107,6 +120,8 @@
                                         'processing' => 'bg-blue-100 text-blue-800',
                                         'completed' => 'bg-green-100 text-green-800',
                                         'failed' => 'bg-red-100 text-red-800',
+                                        'sent_to_siesa' => 'bg-purple-100 text-purple-800',
+                                        'siesa_error' => 'bg-orange-100 text-orange-800',
                                     ];
                                     $financialStatus = $order->order_json['financial_status'] ?? 'N/A';
                                     $financialStatusColors = [
@@ -132,45 +147,56 @@
                                 @endphp
                                 <tr class="align-top">
                                     <td class="ui-table-compact-td">
-                                        <p class="font-semibold text-[var(--color-text)]">#{{ $order->shopify_order_number }}</p>
-                                        <p class="text-xs text-[var(--color-text-muted)]">ID: {{ $order->shopify_order_id }}</p>
+                                        <p class="font-semibold text-[var(--color-text)]">
+                                            #{{ $order->shopify_order_number }}</p>
+                                        <p class="text-xs text-[var(--color-text-muted)]">ID:
+                                            {{ $order->shopify_order_id }}</p>
                                     </td>
                                     <td class="ui-table-compact-td">
                                         <p class="font-medium text-[var(--color-text)]">{{ $order->customer_name }}</p>
-                                        <p class="text-xs text-[var(--color-text-muted)]">{{ $order->customer_email }}</p>
+                                        <p class="text-xs text-[var(--color-text-muted)]">{{ $order->customer_email }}
+                                        </p>
                                     </td>
                                     <td class="ui-table-compact-td">
-                                        <p class="font-semibold text-[var(--color-text)]">${{ number_format($order->total_price, 0, '', '.') }}</p>
+                                        <p class="font-semibold text-[var(--color-text)]">
+                                            ${{ number_format($order->total_price, 0, '', '.') }}</p>
                                         <p class="text-xs text-[var(--color-text-muted)]">COP</p>
                                     </td>
                                     <td class="ui-table-compact-td">
-                                        <span class="ui-badge {{ $financialStatusColors[$financialStatus] ?? 'bg-gray-100 text-gray-700' }}">
+                                        <span
+                                            class="ui-badge {{ $financialStatusColors[$financialStatus] ?? 'bg-gray-100 text-gray-700' }}">
                                             {{ $financialStatusLabels[$financialStatus] ?? $financialStatus }}
                                         </span>
                                     </td>
                                     <td class="ui-table-compact-td">
                                         <p class="text-[var(--color-text)]">{{ $firstPayment }}</p>
                                         @if (count($paymentGateways) > 1)
-                                            <p class="text-xs text-[var(--color-text-muted)]">+{{ count($paymentGateways) - 1 }} más</p>
+                                            <p class="text-xs text-[var(--color-text-muted)]">
+                                                +{{ count($paymentGateways) - 1 }} más</p>
                                         @endif
                                     </td>
                                     <td class="ui-table-compact-td">
-                                        <span class="ui-badge {{ $statusColors[$order->status->value] ?? 'bg-gray-100 text-gray-700' }}">
+                                        <span
+                                            class="ui-badge {{ $statusColors[$order->status->value] ?? 'bg-gray-100 text-gray-700' }}">
                                             {{ $statusLabels[$order->status->value] ?? $order->status->value }}
                                         </span>
                                         @if ($order->error_message)
-                                            <p class="mt-1 text-xs text-red-700">{{ Str::limit($order->error_message, 42) }}</p>
+                                            <p class="mt-1 text-xs text-red-700">
+                                                {{ Str::limit($order->error_message, 42) }}</p>
                                         @endif
                                     </td>
                                     <td class="ui-table-compact-td">
-                                        <p class="text-[var(--color-text)]">{{ $order->created_at->format('d/m/Y') }}</p>
-                                        <p class="text-xs text-[var(--color-text-muted)]">{{ $order->created_at->format('H:i') }}</p>
+                                        <p class="text-[var(--color-text)]">{{ $order->created_at->format('d/m/Y') }}
+                                        </p>
+                                        <p class="text-xs text-[var(--color-text-muted)]">
+                                            {{ $order->created_at->format('H:i') }}</p>
                                     </td>
                                     <td class="ui-table-compact-td-right">
                                         <div class="flex items-center justify-end gap-2">
-                                            <a href="{{ route('admin.orders.show', $order) }}" title="Ver logs del pedido"
-                                                class="ui-icon-btn">
-                                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-4 w-4">
+                                            <a href="{{ route('admin.orders.show', $order) }}"
+                                                title="Ver logs del pedido" class="ui-icon-btn">
+                                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+                                                    fill="currentColor" class="h-4 w-4">
                                                     <path d="M12 15a3 3 0 100-6 3 3 0 000 6z" />
                                                     <path fill-rule="evenodd"
                                                         d="M1.323 11.447C2.811 6.976 7.028 3.75 12.001 3.75c4.97 0 9.185 3.223 10.675 7.69.12.362.12.752 0 1.113-1.487 4.471-5.705 7.697-10.677 7.697-4.97 0-9.186-3.223-10.675-7.69a1.762 1.762 0 010-1.113zM17.25 12a5.25 5.25 0 11-10.5 0 5.25 5.25 0 0110.5 0z"
@@ -178,16 +204,18 @@
                                                 </svg>
                                             </a>
 
-                                            @if ($order->status->value !== 'completed')
-                                                <form method="POST" action="{{ route('admin.orders.reprocess', $order) }}"
+                                            @if (!in_array($order->status->value, ['completed', 'sent_to_siesa']))
+                                                <form method="POST"
+                                                    action="{{ route('admin.orders.reprocess', $order) }}"
                                                     onsubmit="return confirm('¿Reprocesar este pedido ahora?');">
                                                     @csrf
-                                                    <button type="submit"
-                                                        class="ui-icon-btn"
-                                                        title="Reprocesar pedido"
+                                                    <button type="submit" class="ui-icon-btn" title="Reprocesar pedido"
                                                         aria-label="Reprocesar pedido">
-                                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-4 w-4">
-                                                            <path fill-rule="evenodd" d="M4.5 4.5a.75.75 0 011.06 0l1.72 1.72A8.25 8.25 0 112.25 12a.75.75 0 011.5 0 6.75 6.75 0 104.31-6.29l1.41 1.41a.75.75 0 11-1.06 1.06L4.5 5.56a.75.75 0 010-1.06z" clip-rule="evenodd" />
+                                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+                                                            fill="currentColor" class="h-4 w-4">
+                                                            <path fill-rule="evenodd"
+                                                                d="M4.5 4.5a.75.75 0 011.06 0l1.72 1.72A8.25 8.25 0 112.25 12a.75.75 0 011.5 0 6.75 6.75 0 104.31-6.29l1.41 1.41a.75.75 0 11-1.06 1.06L4.5 5.56a.75.75 0 010-1.06z"
+                                                                clip-rule="evenodd" />
                                                         </svg>
                                                     </button>
                                                 </form>

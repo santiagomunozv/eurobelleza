@@ -91,7 +91,7 @@ class RefreshOrderData extends Command
                 ]);
 
                 // Si tiene opción de reprocesar y el pedido no está completado
-                if ($this->option('reprocess') && $order->status !== OrderStatusEnum::COMPLETED) {
+                if ($this->option('reprocess') && !in_array($order->status, [OrderStatusEnum::COMPLETED, OrderStatusEnum::SENT_TO_SIESA])) {
                     // Validar si ahora tiene configuración completa
                     $validation = $this->configValidator->validate($freshData);
 
@@ -190,7 +190,7 @@ class RefreshOrderData extends Command
         }
 
         if ($this->option('non-completed')) {
-            return Order::where('status', '!=', OrderStatusEnum::COMPLETED->value)
+            return Order::whereNotIn('status', [OrderStatusEnum::COMPLETED->value, OrderStatusEnum::SENT_TO_SIESA->value])
                 ->where('created_at', '>=', $fromDate)
                 ->get();
         }

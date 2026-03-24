@@ -62,7 +62,7 @@ class OrderRepository
             $data['error_message'] = $errorMessage;
         }
 
-        if ($status === OrderStatusEnum::COMPLETED) {
+        if (in_array($status, [OrderStatusEnum::COMPLETED, OrderStatusEnum::SENT_TO_SIESA])) {
             $data['processed_at'] = now();
         }
 

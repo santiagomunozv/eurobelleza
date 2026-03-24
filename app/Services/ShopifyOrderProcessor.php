@@ -56,8 +56,14 @@ class ShopifyOrderProcessor
                 'file_path' => $filePath,
             ]);
 
-            $this->orderRepository->updateStatus($order, OrderStatusEnum::COMPLETED);
-            $this->logService->logSuccess($order, 'Pedido procesado exitosamente');
+            $s3Path = $this->uploadToS3($order, $fileContent);
+
+            $this->logService->logSuccess($order, 'Archivo PE0 subido a S3', [
+                's3_path' => $s3Path,
+            ]);
+
+            $this->orderRepository->updateStatus($order, OrderStatusEnum::SENT_TO_SIESA);
+            $this->logService->logSuccess($order, 'Pedido enviado a SIESA exitosamente');
 
             return true;
         } catch (Exception $e) {
@@ -90,5 +96,18 @@ class ShopifyOrderProcessor
         Storage::disk('local')->put($fullPathTXT, $content);
 
         return $fullPathPE0;
+    }
+
+    private function uploadToS3(Order $order, string $content): string
+    {
+        $orderNumber = str_pad($order->shopify_order_number, 8, '0', STR_PAD_LEFT);
+
+        // Estructura plana en S3: {numero}.PE0
+        // S3 es solo canal de transferencia, el histórico queda en local con carpetas por fecha
+        $s3Path = "{$orderNumber}.PE0";
+
+        Storage::disk('siesa_pedidos')->put($s3Path, $content);
+
+        return $s3Path;
     }
 }
