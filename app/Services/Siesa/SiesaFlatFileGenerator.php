@@ -223,16 +223,21 @@ class SiesaFlatFileGenerator
             return null;
         }
 
-        $allMappings = SiesaPaymentGatewayMapping::all();
-        $tagsLower = strtolower($tags);
+        // Dividir tags en palabras y buscar con LIKE en la base de datos
+        $words = preg_split('/[\s,]+/', strtolower($tags));
 
-        foreach ($allMappings as $mapping) {
-            $gatewayNameLower = strtolower($mapping->payment_gateway_name);
+        foreach ($words as $word) {
+            // Ignorar palabras muy cortas (conectores, etc.)
+            if (strlen($word) < 3) {
+                continue;
+            }
 
-            // Buscar si el payment_gateway_name aparece en los tags (case-insensitive)
-            if (str_contains($tagsLower, $gatewayNameLower)) {
+            $mapping = SiesaPaymentGatewayMapping::whereRaw('LOWER(payment_gateway_name) LIKE ?', ["%{$word}%"])->first();
+
+            if ($mapping) {
                 $this->orderLogService->logInfo($order, 'payment_gateway_found_from_tags', [
                     'tags' => $tags,
+                    'matched_word' => $word,
                     'matched_gateway' => $mapping->payment_gateway_name
                 ]);
                 return $mapping;
