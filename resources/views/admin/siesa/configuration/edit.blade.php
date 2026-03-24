@@ -80,8 +80,7 @@
                                     Tipo de Cliente <span class="text-red-500">*</span>
                                 </label>
                                 <select id="tipo_cliente" name="tipo_cliente"
-                                    class="ui-input-sm @error('tipo_cliente') border-red-500 @enderror"
-                                    required>
+                                    class="ui-input-sm @error('tipo_cliente') border-red-500 @enderror" required>
                                     @foreach ($tipoClienteOptions as $option)
                                         <option value="{{ $option['value'] }}"
                                             {{ old('tipo_cliente', $configuration->tipo_cliente->value) == $option['value'] ? 'selected' : '' }}>
@@ -133,12 +132,28 @@
                                 </label>
                                 <input type="text" id="motivo" name="motivo" maxlength="2"
                                     value="{{ old('motivo', $configuration->motivo) }}"
-                                    class="ui-input-sm @error('motivo') border-red-500 @enderror"
-                                    placeholder="Ej: 01" required>
+                                    class="ui-input-sm @error('motivo') border-red-500 @enderror" placeholder="Ej: 01"
+                                    required>
                                 @error('motivo')
                                     <p class="ui-error">{{ $message }}</p>
                                 @enderror
                                 <p class="ui-help">Código del motivo (Ej: 01 = Ventas nacionales).
+                                    Máximo 2 caracteres</p>
+                            </div>
+
+                            <!-- Motivo Obsequio -->
+                            <div class="ui-form-col">
+                                <label for="motivo_obsequio" class="ui-label">
+                                    Motivo de Obsequio <span class="text-red-500">*</span>
+                                </label>
+                                <input type="text" id="motivo_obsequio" name="motivo_obsequio" maxlength="2"
+                                    value="{{ old('motivo_obsequio', $configuration->motivo_obsequio) }}"
+                                    class="ui-input-sm @error('motivo_obsequio') border-red-500 @enderror"
+                                    placeholder="Ej: 02" required>
+                                @error('motivo_obsequio')
+                                    <p class="ui-error">{{ $message }}</p>
+                                @enderror
+                                <p class="ui-help">Motivo para productos de obsequio (precio = 0).
                                     Máximo 2 caracteres</p>
                             </div>
 
@@ -155,6 +170,39 @@
                                     <p class="ui-error">{{ $message }}</p>
                                 @enderror
                                 <p class="ui-help">Código de lista de precio. Máximo 3 caracteres</p>
+                            </div>
+
+                            <!-- Lista de Precio Flete -->
+                            <div class="ui-form-col">
+                                <label for="lista_precio_flete" class="ui-label">
+                                    Lista de Precio Flete <span class="text-red-500">*</span>
+                                </label>
+                                <input type="text" id="lista_precio_flete" name="lista_precio_flete"
+                                    maxlength="3"
+                                    value="{{ old('lista_precio_flete', $configuration->lista_precio_flete) }}"
+                                    class="ui-input-sm @error('lista_precio_flete') border-red-500 @enderror"
+                                    placeholder="Ej: 999" required>
+                                @error('lista_precio_flete')
+                                    <p class="ui-error">{{ $message }}</p>
+                                @enderror
+                                <p class="ui-help">Lista de precio para líneas de envío. Máximo 3 caracteres</p>
+                            </div>
+
+                            <!-- Lista de Precio Obsequio -->
+                            <div class="ui-form-col">
+                                <label for="lista_precio_obsequio" class="ui-label">
+                                    Lista de Precio Obsequio <span class="text-red-500">*</span>
+                                </label>
+                                <input type="text" id="lista_precio_obsequio" name="lista_precio_obsequio"
+                                    maxlength="3"
+                                    value="{{ old('lista_precio_obsequio', $configuration->lista_precio_obsequio) }}"
+                                    class="ui-input-sm @error('lista_precio_obsequio') border-red-500 @enderror"
+                                    placeholder="Ej: 013" required>
+                                @error('lista_precio_obsequio')
+                                    <p class="ui-error">{{ $message }}</p>
+                                @enderror
+                                <p class="ui-help">Lista de precio para productos de obsequio (precio = 0). Máximo 3
+                                    caracteres</p>
                             </div>
 
                             <!-- Unidad de Captura -->
@@ -200,8 +248,7 @@
                                     Unidad del Precio <span class="text-red-500">*</span>
                                 </label>
                                 <select id="unidad_precio" name="unidad_precio"
-                                    class="ui-input-sm @error('unidad_precio') border-red-500 @enderror"
-                                    required>
+                                    class="ui-input-sm @error('unidad_precio') border-red-500 @enderror" required>
                                     @foreach ($unidadPrecioOptions as $option)
                                         <option value="{{ $option['value'] }}"
                                             {{ old('unidad_precio', $configuration->unidad_precio->value) == $option['value'] ? 'selected' : '' }}>
@@ -218,17 +265,16 @@
                     </div>
 
                     <!-- Footer con botones -->
-                    <div class="flex items-center justify-between border-t border-[var(--color-border)] bg-gray-50 px-6 py-4">
+                    <div
+                        class="flex items-center justify-between border-t border-[var(--color-border)] bg-gray-50 px-6 py-4">
                         <p class="ui-help">
                             <span class="text-red-500">*</span> Campos obligatorios
                         </p>
                         <div class="flex gap-3">
-                            <a href="{{ route('admin.orders.index') }}"
-                                class="ui-btn-neutral">
+                            <a href="{{ route('admin.orders.index') }}" class="ui-btn-neutral">
                                 Cancelar
                             </a>
-                            <button type="submit"
-                                class="ui-btn-primary">
+                            <button type="submit" class="ui-btn-primary">
                                 Guardar Configuración
                             </button>
                         </div>

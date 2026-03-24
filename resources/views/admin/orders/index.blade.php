@@ -6,7 +6,7 @@
     </x-slot>
 
     @php
-        $hasFilters = request('search') || request('status');
+        $hasFilters = request('search') || request('status') || request('date_from') || request('date_to');
         $statusLabels = [
             'pending' => 'Pendiente',
             'processing' => 'Procesando',
@@ -32,9 +32,20 @@
             @endif
 
             <section class="ui-card p-5">
-                <div class="mb-4 flex flex-col gap-1">
-                    <h3 class="ui-section-title">Pedidos de Shopify</h3>
-                    <p class="ui-section-subtitle">Gestión y seguimiento de pedidos sincronizados con SIESA.</p>
+                <div class="mb-4 flex items-center justify-between">
+                    <div class="flex flex-col gap-1">
+                        <h3 class="ui-section-title">Pedidos de Shopify</h3>
+                        <p class="ui-section-subtitle">Gestión y seguimiento de pedidos sincronizados con SIESA.</p>
+                    </div>
+                    <a href="{{ route('admin.orders.export', request()->query()) }}"
+                        class="ui-btn-primary inline-flex items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5">
+                            <path fill-rule="evenodd"
+                                d="M12 2.25a.75.75 0 01.75.75v11.69l3.22-3.22a.75.75 0 111.06 1.06l-4.5 4.5a.75.75 0 01-1.06 0l-4.5-4.5a.75.75 0 111.06-1.06l3.22 3.22V3a.75.75 0 01.75-.75zm-9 13.5a.75.75 0 01.75.75v2.25a1.5 1.5 0 001.5 1.5h13.5a1.5 1.5 0 001.5-1.5V16.5a.75.75 0 011.5 0v2.25a3 3 0 01-3 3H5.25a3 3 0 01-3-3V16.5a.75.75 0 01.75-.75z"
+                                clip-rule="evenodd" />
+                        </svg>
+                        Exportar a Excel
+                    </a>
                 </div>
 
                 <form method="GET" action="{{ route('admin.orders.index') }}" class="ui-orders-filter-grid">
@@ -56,11 +67,24 @@
                                 Completado</option>
                             <option value="sent_to_siesa" {{ request('status') == 'sent_to_siesa' ? 'selected' : '' }}>
                                 Enviado a SIESA</option>
-                            <option value="siesa_error" {{ request('status') == 'siesa_error' ? 'selected' : '' }}>Error
+                            <option value="siesa_error" {{ request('status') == 'siesa_error' ? 'selected' : '' }}>
+                                Error
                                 SIESA</option>
                             <option value="failed" {{ request('status') == 'failed' ? 'selected' : '' }}>Fallido
                             </option>
                         </select>
+                    </div>
+
+                    <div>
+                        <label for="date_from" class="ui-label">Fecha desde</label>
+                        <input id="date_from" type="date" name="date_from" value="{{ request('date_from') }}"
+                            class="ui-input">
+                    </div>
+
+                    <div>
+                        <label for="date_to" class="ui-label">Fecha hasta</label>
+                        <input id="date_to" type="date" name="date_to" value="{{ request('date_to') }}"
+                            class="ui-input">
                     </div>
 
                     <div class="ui-orders-filter-action">
@@ -86,6 +110,16 @@
                         @if (request('status'))
                             <span class="ui-badge bg-[var(--color-primary-soft)] text-[#1c4789]">
                                 Estado: {{ $statusLabels[request('status')] ?? request('status') }}
+                            </span>
+                        @endif
+                        @if (request('date_from'))
+                            <span class="ui-badge bg-[var(--color-primary-soft)] text-[#1c4789]">
+                                Desde: {{ request('date_from') }}
+                            </span>
+                        @endif
+                        @if (request('date_to'))
+                            <span class="ui-badge bg-[var(--color-primary-soft)] text-[#1c4789]">
+                                Hasta: {{ request('date_to') }}
                             </span>
                         @endif
                     </div>
@@ -209,8 +243,8 @@
                                                     action="{{ route('admin.orders.reprocess', $order) }}"
                                                     onsubmit="return confirm('¿Reprocesar este pedido ahora?');">
                                                     @csrf
-                                                    <button type="submit" class="ui-icon-btn" title="Reprocesar pedido"
-                                                        aria-label="Reprocesar pedido">
+                                                    <button type="submit" class="ui-icon-btn"
+                                                        title="Reprocesar pedido" aria-label="Reprocesar pedido">
                                                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
                                                             fill="currentColor" class="h-4 w-4">
                                                             <path fill-rule="evenodd"

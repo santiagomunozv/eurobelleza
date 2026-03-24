@@ -52,7 +52,14 @@ class SiesaFlatFileGenerator
 
         $lines = [];
         foreach ($lineItems as $lineItem) {
-            $lines[] = $this->generateLine($commonData, $lineItem, $config);
+            // Detectar si es producto de obsequio (precio final = 0)
+            $basePrice = floatval($lineItem['price'] ?? 0);
+            $discountAllocations = $lineItem['discount_allocations'] ?? [];
+            $discountAmount = !empty($discountAllocations) ? floatval($discountAllocations[0]['amount'] ?? 0) : 0;
+            $finalPrice = $basePrice - $discountAmount;
+            $isGift = ($finalPrice == 0);
+
+            $lines[] = $this->generateLine($commonData, $lineItem, $config, false, $isGift);
         }
 
         // Agregar línea de envío si el valor es mayor a 0
@@ -65,7 +72,7 @@ class SiesaFlatFileGenerator
                 'price' => $shippingAmount,
                 'discount_allocations' => [] // Sin descuentos en envío
             ];
-            $lines[] = $this->generateLine($commonData, $shippingItem, $config, true);
+            $lines[] = $this->generateLine($commonData, $shippingItem, $config, true, false);
         }
 
         return implode("\n", $lines);
@@ -96,11 +103,18 @@ class SiesaFlatFileGenerator
 
         $gatewayName = $paymentGateways[0]; // Tomar el primero
 
-        $gatewayMapping = SiesaPaymentGatewayMapping::findByGateway($gatewayName);
+        // Si el gateway es "manual", buscar en tags
+        if (strtolower($gatewayName) === 'manual') {
+            $tags = $orderData['tags'] ?? '';
+            $gatewayMapping = $this->findGatewayFromTags($order, $tags);
+        } else {
+            $gatewayMapping = SiesaPaymentGatewayMapping::findByGateway($gatewayName);
+        }
 
         if (!$gatewayMapping) {
             $this->orderLogService->logError($order, 'payment_gateway_mapping_not_found', [
                 'payment_gateway' => $gatewayName,
+                'tags' => $orderData['tags'] ?? '',
                 'error' => 'No existe configuración para este método de pago en SIESA'
             ]);
             throw new \Exception("No existe configuración para el método de pago: {$gatewayName}");
@@ -193,15 +207,57 @@ class SiesaFlatFileGenerator
     }
 
     /**
+     * Busca configuración de payment gateway basándose en los tags del pedido
+     * Hace matching case-insensitive con los payment_gateway_name configurados
+     *
+     * @param Order $order Pedido de Shopify
+     * @param string $tags Tags del pedido (texto libre)
+     * @return \App\Models\SiesaPaymentGatewayMapping|null
+     */
+    private function findGatewayFromTags(Order $order, string $tags): ?\App\Models\SiesaPaymentGatewayMapping
+    {
+        if (empty($tags)) {
+            $this->orderLogService->logError($order, 'payment_gateway_tags_empty', [
+                'error' => 'Pedido con payment gateway "manual" pero sin tags para identificar el método de pago'
+            ]);
+            return null;
+        }
+
+        $allMappings = SiesaPaymentGatewayMapping::all();
+        $tagsLower = strtolower($tags);
+
+        foreach ($allMappings as $mapping) {
+            $gatewayNameLower = strtolower($mapping->payment_gateway_name);
+
+            // Buscar si el payment_gateway_name aparece en los tags (case-insensitive)
+            if (str_contains($tagsLower, $gatewayNameLower)) {
+                $this->orderLogService->logInfo($order, 'payment_gateway_found_from_tags', [
+                    'tags' => $tags,
+                    'matched_gateway' => $mapping->payment_gateway_name
+                ]);
+                return $mapping;
+            }
+        }
+
+        $this->orderLogService->logError($order, 'payment_gateway_not_found_in_tags', [
+            'tags' => $tags,
+            'error' => 'No se encontró ningún payment gateway configurado que coincida con los tags'
+        ]);
+
+        return null;
+    }
+
+    /**
      * Genera una línea completa del archivo (543 caracteres) para un producto
      *
      * @param array $commonData Datos comunes del encabezado
      * @param array $lineItem Producto del pedido
      * @param SiesaGeneralConfiguration $config Configuración general de SIESA
-     * @param bool $isShipping Si es línea de envío (usa lista 999)
+     * @param bool $isShipping Si es línea de envío (usa lista_precio_flete y motivo general)
+     * @param bool $isGift Si es producto de obsequio (usa lista_precio_obsequio y motivo_obsequio)
      * @return string Línea de 543 caracteres
      */
-    private function generateLine(array $commonData, array $lineItem, SiesaGeneralConfiguration $config, bool $isShipping = false): string
+    private function generateLine(array $commonData, array $lineItem, SiesaGeneralConfiguration $config, bool $isShipping = false, bool $isGift = false): string
     {
         $line = '';
 
@@ -259,7 +315,13 @@ class SiesaFlatFileGenerator
         $line .= $config->unidad_precio->value;
 
         // 18) Posiciones 132-134: Lista de precio
-        $listaPrecio = $isShipping ? '900' : $config->lista_precio;
+        if ($isShipping) {
+            $listaPrecio = $config->lista_precio_flete;
+        } elseif ($isGift) {
+            $listaPrecio = $config->lista_precio_obsequio;
+        } else {
+            $listaPrecio = $config->lista_precio;
+        }
         $line .= SiesaFileStructure::padRight($listaPrecio, SiesaFileStructure::LISTA_PRECIO_LENGTH);
 
         // 19) Posiciones 135-136: Lista de descuento
@@ -305,7 +367,8 @@ class SiesaFlatFileGenerator
         $line .= SiesaFileStructure::padRight($commonData['codigo_vendedor'], SiesaFileStructure::CODIGO_VENDEDOR_LENGTH);
 
         // 33) Posiciones 514-515: Motivo
-        $line .= SiesaFileStructure::padRight($commonData['motivo'], SiesaFileStructure::MOTIVO_LENGTH);
+        $motivo = $isGift ? $config->motivo_obsequio : $commonData['motivo'];
+        $line .= SiesaFileStructure::padRight($motivo, SiesaFileStructure::MOTIVO_LENGTH);
 
         // 34) Posiciones 516-523: Centro de costo
         $line .= SiesaFileStructure::padRight($commonData['centro_costo'], SiesaFileStructure::CENTRO_COSTO_LENGTH);

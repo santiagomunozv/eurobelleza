@@ -12,6 +12,7 @@ use App\Services\Shopify\ShopifyApiClient;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class OrderController extends Controller
 {
@@ -29,6 +30,14 @@ class OrderController extends Controller
                 $q->where('shopify_order_number', 'like', "%{$search}%")
                     ->orWhere('shopify_order_id', 'like', "%{$search}%");
             });
+        }
+
+        if ($request->filled('date_from')) {
+            $query->whereDate('created_at', '>=', $request->date_from);
+        }
+
+        if ($request->filled('date_to')) {
+            $query->whereDate('created_at', '<=', $request->date_to);
         }
 
         $orders = $query->orderBy('created_at', 'desc')->paginate(15);
@@ -61,8 +70,7 @@ class OrderController extends Controller
         OrderLogService $orderLogService,
         OrderConfigurationValidator $configValidator,
         ShopifyApiClient $shopifyApiClient
-    ): RedirectResponse
-    {
+    ): RedirectResponse {
         if ($order->status === OrderStatusEnum::COMPLETED) {
             return redirect()
                 ->route('admin.orders.index')
@@ -129,5 +137,102 @@ class OrderController extends Controller
         return redirect()
             ->route('admin.orders.index')
             ->with('success', "Pedido #{$order->shopify_order_number} enviado a reproceso.");
+    }
+
+    public function export(Request $request): StreamedResponse
+    {
+        $query = Order::query();
+
+        // Aplicar los mismos filtros que en index()
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->where('shopify_order_number', 'like', "%{$search}%")
+                    ->orWhere('shopify_order_id', 'like', "%{$search}%");
+            });
+        }
+
+        if ($request->filled('date_from')) {
+            $query->whereDate('created_at', '>=', $request->date_from);
+        }
+
+        if ($request->filled('date_to')) {
+            $query->whereDate('created_at', '<=', $request->date_to);
+        }
+
+        $orders = $query->orderBy('created_at', 'desc')->get();
+
+        $statusLabels = [
+            'pending' => 'Pendiente',
+            'processing' => 'Procesando',
+            'completed' => 'Completado',
+            'failed' => 'Fallido',
+            'sent_to_siesa' => 'Enviado a SIESA',
+            'siesa_error' => 'Error SIESA',
+        ];
+
+        $financialStatusLabels = [
+            'paid' => 'Pagado',
+            'pending' => 'Pendiente',
+            'authorized' => 'Autorizado',
+            'partially_paid' => 'Parcial',
+            'refunded' => 'Reembolsado',
+            'voided' => 'Anulado',
+            'partially_refunded' => 'Reemb. Parcial',
+        ];
+
+        $fileName = 'pedidos_' . now()->format('Y-m-d_His') . '.csv';
+
+        return response()->streamDownload(function () use ($orders, $statusLabels, $financialStatusLabels) {
+            $handle = fopen('php://output', 'w');
+
+            // BOM para UTF-8 (para que Excel reconozca tildes)
+            fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF));
+
+            // Encabezados
+            fputcsv($handle, [
+                'Número Pedido',
+                'ID Shopify',
+                'Cliente Nombre',
+                'Cliente Email',
+                'Total (COP)',
+                'Estado Pago',
+                'Método Pago',
+                'Estado',
+                'Mensaje Error',
+                'Fecha',
+                'Hora',
+            ], ';');
+
+            // Datos
+            foreach ($orders as $order) {
+                $financialStatus = $order->order_json['financial_status'] ?? 'N/A';
+                $paymentGateways = $order->order_json['payment_gateway_names'] ?? [];
+                $paymentMethod = !empty($paymentGateways) ? implode(', ', $paymentGateways) : 'N/A';
+
+                fputcsv($handle, [
+                    $order->shopify_order_number,
+                    $order->shopify_order_id,
+                    $order->customer_name ?? '',
+                    $order->customer_email ?? '',
+                    $order->total_price,
+                    $financialStatusLabels[$financialStatus] ?? $financialStatus,
+                    $paymentMethod,
+                    $statusLabels[$order->status->value] ?? $order->status->value,
+                    $order->error_message ?? '',
+                    $order->created_at->format('d/m/Y'),
+                    $order->created_at->format('H:i'),
+                ], ';');
+            }
+
+            fclose($handle);
+        }, $fileName, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => "attachment; filename={$fileName}",
+        ]);
     }
 }
