@@ -34,6 +34,7 @@ Route::get('/dashboard', function () {
     $statusMeta = [
         OrderStatusEnum::PENDING->value => ['label' => 'Pendientes', 'color' => 'text-amber-700', 'bg' => 'bg-amber-50', 'border' => 'border-amber-200'],
         OrderStatusEnum::PROCESSING->value => ['label' => 'Procesando', 'color' => 'text-blue-700', 'bg' => 'bg-blue-50', 'border' => 'border-blue-200'],
+        OrderStatusEnum::RPA_PROCESSING->value => ['label' => 'Procesando en RPA', 'color' => 'text-indigo-700', 'bg' => 'bg-indigo-50', 'border' => 'border-indigo-200'],
         OrderStatusEnum::COMPLETED->value => ['label' => 'Completados', 'color' => 'text-green-700', 'bg' => 'bg-green-50', 'border' => 'border-green-200'],
         OrderStatusEnum::FAILED->value => ['label' => 'Fallidos', 'color' => 'text-red-700', 'bg' => 'bg-red-50', 'border' => 'border-red-200'],
         OrderStatusEnum::SENT_TO_SIESA->value => ['label' => 'Enviados a SIESA', 'color' => 'text-purple-700', 'bg' => 'bg-purple-50', 'border' => 'border-purple-200'],

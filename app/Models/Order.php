@@ -52,6 +52,11 @@ class Order extends Model
         return $query->where('status', OrderStatusEnum::PROCESSING);
     }
 
+    public function scopeRpaProcessing($query)
+    {
+        return $query->where('status', OrderStatusEnum::RPA_PROCESSING);
+    }
+
     public function getCustomerNameAttribute(): string
     {
         $customer = $this->order_json['customer'] ?? [];

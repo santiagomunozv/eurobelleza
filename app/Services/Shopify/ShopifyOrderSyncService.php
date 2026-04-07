@@ -239,6 +239,13 @@ class ShopifyOrderSyncService
                     $validation = $this->configValidator->validate($newOrderData);
 
                     if ($validation['valid']) {
+                        if (in_array($order->status->value, [
+                            OrderStatusEnum::SENT_TO_SIESA->value,
+                            OrderStatusEnum::RPA_PROCESSING->value,
+                        ], true)) {
+                            continue;
+                        }
+
                         if ($order->status->value !== OrderStatusEnum::PENDING->value) {
                             $order->update([
                                 'status' => OrderStatusEnum::PENDING->value,

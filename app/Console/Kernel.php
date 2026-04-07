@@ -25,7 +25,7 @@ class Kernel extends ConsoleKernel
             ->dailyAt('03:00')
             ->timezone('America/Bogota');
 
-        // Revisión de errores SIESA cada 30 minutos
+        // Revisión de resultados y errores reportados por el RPA
         $schedule->command('siesa:check-errors')
             ->everyThirtyMinutes()
             ->timezone('America/Bogota');

@@ -2,64 +2,146 @@
 
 namespace App\Console\Commands;
 
-use App\Models\Order;
 use App\Enums\OrderStatusEnum;
+use App\Models\Order;
 use App\Repositories\OrderRepository;
 use App\Services\OrderLogService;
+use App\Services\Siesa\SiesaRunResultProcessor;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class CheckSiesaErrors extends Command
 {
-    protected $signature = 'siesa:check-errors
-                            {--hours=1 : Horas sin error para marcar un pedido como completado}';
+    protected $signature = 'siesa:check-errors';
 
-    protected $description = 'Revisa archivos P99 de errores en S3, actualiza estados y marca pedidos completados';
+    protected $description = 'Procesa resultados de corridas RPA y archivos P99 de Siesa en S3';
 
     public function __construct(
         private OrderRepository $orderRepository,
-        private OrderLogService $logService
+        private OrderLogService $logService,
+        private SiesaRunResultProcessor $runResultProcessor
     ) {
         parent::__construct();
     }
 
     public function handle(): int
     {
-        $this->procesarArchivosError();
-        $this->completarPedidosEnEspera((int) $this->option('hours'));
+        $resultStats = $this->procesarResultadosRpa();
+        $errorStats = $this->procesarArchivosErrorLegados();
+
+        $this->table(
+            ['Fuente', 'Procesados', 'Con error', 'Notas'],
+            [
+                [
+                    'resultados/',
+                    $resultStats['processed_files'],
+                    $resultStats['failed_orders'],
+                    $resultStats['notes'],
+                ],
+                [
+                    'errores/',
+                    $errorStats['processed_files'],
+                    $errorStats['failed_orders'],
+                    $errorStats['notes'],
+                ],
+            ]
+        );
 
         return self::SUCCESS;
     }
 
-    private function procesarArchivosError(): void
+    private function procesarResultadosRpa(): array
     {
-        $archivos = Storage::disk('siesa_errores')->files();
-        $archivosP99 = array_filter($archivos, fn($f) => str_ends_with(strtoupper($f), '.P99'));
+        $processedFiles = 0;
+        $failedOrders = 0;
+        $notes = [];
 
-        if (empty($archivosP99)) {
-            $this->info('No hay archivos de error en S3');
-            return;
+        $resultFiles = collect(Storage::disk('siesa_resultados')->files())
+            ->filter(fn($path) => str_ends_with(strtolower($path), '.json'))
+            ->sort()
+            ->values();
+
+        if ($resultFiles->isEmpty()) {
+            return [
+                'processed_files' => 0,
+                'failed_orders' => 0,
+                'notes' => 'Sin resultados pendientes',
+            ];
         }
 
-        $this->info('Procesando ' . count($archivosP99) . ' archivo(s) de error');
+        foreach ($resultFiles as $path) {
+            try {
+                $content = Storage::disk('siesa_resultados')->get($path);
+                $payload = json_decode($content, true, flags: JSON_THROW_ON_ERROR);
+                $summary = $this->runResultProcessor->process($path, $payload);
 
-        foreach ($archivosP99 as $clave) {
-            $contenido = Storage::disk('siesa_errores')->get($clave);
+                Storage::disk('siesa_resultados')->delete($path);
+
+                $processedFiles++;
+                $failedOrders += $summary['failed'];
+
+                $note = "run_id={$summary['run_id']} completados={$summary['completed']} con_error={$summary['failed']}";
+                if (!empty($summary['missing_files'])) {
+                    $note .= ' faltantes=' . implode(',', $summary['missing_files']);
+                }
+                if (!empty($summary['fatal_error'])) {
+                    $note .= ' fatal_error';
+                }
+                $notes[] = $note;
+            } catch (\Throwable $e) {
+                Log::error('No se pudo procesar el resultado RPA', [
+                    'path' => $path,
+                    'error' => $e->getMessage(),
+                ]);
+                $notes[] = "fallo {$path}";
+            }
+        }
+
+        return [
+            'processed_files' => $processedFiles,
+            'failed_orders' => $failedOrders,
+            'notes' => implode(' | ', $notes),
+        ];
+    }
+
+    private function procesarArchivosErrorLegados(): array
+    {
+        $processedFiles = 0;
+        $failedOrders = 0;
+        $notes = [];
+
+        $files = Storage::disk('siesa_errores')->files();
+        $legacyP99Files = array_values(array_filter($files, fn($file) => str_ends_with(strtoupper($file), '.P99')));
+
+        if (empty($legacyP99Files)) {
+            return [
+                'processed_files' => 0,
+                'failed_orders' => 0,
+                'notes' => 'Sin P99 pendientes',
+            ];
+        }
+
+        foreach ($legacyP99Files as $path) {
+            $contenido = Storage::disk('siesa_errores')->get($path);
             $erroresPorPedido = $this->parsearErroresBlocking($contenido);
 
             foreach ($erroresPorPedido as $numeroPedido => $lineasError) {
-                $this->marcarPedidoConError($numeroPedido, $lineasError, $clave);
+                if ($this->marcarPedidoConError($numeroPedido, $lineasError, $path)) {
+                    $failedOrders++;
+                }
             }
 
-            Storage::disk('siesa_errores')->delete($clave);
-            $this->info("Procesado y eliminado de S3: {$clave}");
-
-            Log::info('siesa:check-errors archivo procesado', [
-                'archivo' => $clave,
-                'pedidos_con_error' => count($erroresPorPedido),
-            ]);
+            Storage::disk('siesa_errores')->delete($path);
+            $processedFiles++;
+            $notes[] = basename($path);
         }
+
+        return [
+            'processed_files' => $processedFiles,
+            'failed_orders' => $failedOrders,
+            'notes' => implode(', ', $notes),
+        ];
     }
 
     private function parsearErroresBlocking(string $contenido): array
@@ -67,8 +149,6 @@ class CheckSiesaErrors extends Command
         $erroresPorPedido = [];
 
         foreach (explode("\n", $contenido) as $linea) {
-            // Líneas blocking: comienzan con espacio + 10 dígitos del pedido
-            // Líneas con * al inicio son advertencias y no detienen el proceso
             if (!preg_match('/^ (\d{10})\s+(.+)$/', $linea, $matches)) {
                 continue;
             }
@@ -82,49 +162,31 @@ class CheckSiesaErrors extends Command
         return $erroresPorPedido;
     }
 
-    private function marcarPedidoConError(string $numeroPedido, array $lineasError, string $archivoP99): void
+    private function marcarPedidoConError(string $numeroPedido, array $lineasError, string $archivoP99): bool
     {
         $order = Order::where('shopify_order_number', $numeroPedido)
-            ->where('status', OrderStatusEnum::SENT_TO_SIESA->value)
+            ->whereIn('status', [
+                OrderStatusEnum::SENT_TO_SIESA->value,
+                OrderStatusEnum::RPA_PROCESSING->value,
+            ])
             ->first();
 
         if (!$order) {
-            $this->warn("Pedido #{$numeroPedido}: no encontrado con estado sent_to_siesa");
-            return;
+            $this->warn("Pedido #{$numeroPedido}: no encontrado en estado sent_to_siesa/rpa_processing");
+            return false;
         }
 
         $mensajeError = implode(' | ', array_unique($lineasError));
 
         $this->orderRepository->updateStatus($order, OrderStatusEnum::SIESA_ERROR, $mensajeError);
 
-        $this->logService->logError($order, 'siesa_error_detectado', [
+        $this->logService->logError($order, 'siesa_error_detectado_desde_p99', [
             'archivo_p99' => $archivoP99,
             'errores' => $lineasError,
         ]);
 
         $this->info("Pedido #{$numeroPedido}: marcado como siesa_error");
-    }
 
-    private function completarPedidosEnEspera(int $hours): void
-    {
-        $limite = now()->subHours($hours);
-
-        $pedidos = Order::where('status', OrderStatusEnum::SENT_TO_SIESA->value)
-            ->where('processed_at', '<=', $limite)
-            ->get();
-
-        if ($pedidos->isEmpty()) {
-            return;
-        }
-
-        $this->info("Completando {$pedidos->count()} pedido(s) sin error tras {$hours}h");
-
-        foreach ($pedidos as $order) {
-            $this->orderRepository->updateStatus($order, OrderStatusEnum::COMPLETED);
-
-            $this->logService->logSuccess($order, 'siesa_pedido_completado_sin_error', [
-                'hours_elapsed' => $hours,
-            ]);
-        }
+        return true;
     }
 }

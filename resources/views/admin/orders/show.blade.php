@@ -19,7 +19,18 @@
                     </div>
                     <div class="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
                         <p class="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">Estado pedido</p>
-                        <p class="mt-1 text-sm font-semibold text-[var(--color-text)]">{{ ucfirst($order->status->value) }}</p>
+                        @php
+                            $statusLabels = [
+                                'pending' => 'Pendiente',
+                                'processing' => 'Procesando',
+                                'rpa_processing' => 'Procesando en RPA',
+                                'completed' => 'Completado',
+                                'failed' => 'Fallido',
+                                'sent_to_siesa' => 'Enviado a SIESA',
+                                'siesa_error' => 'Error SIESA',
+                            ];
+                        @endphp
+                        <p class="mt-1 text-sm font-semibold text-[var(--color-text)]">{{ $statusLabels[$order->status->value] ?? $order->status->value }}</p>
                     </div>
                     <div class="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
                         <p class="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">Logs info</p>

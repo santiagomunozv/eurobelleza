@@ -58,6 +58,7 @@
                                     $statusClasses = [
                                         'pending' => 'bg-amber-100 text-amber-800',
                                         'processing' => 'bg-blue-100 text-blue-800',
+                                        'rpa_processing' => 'bg-indigo-100 text-indigo-800',
                                         'completed' => 'bg-green-100 text-green-800',
                                         'failed' => 'bg-red-100 text-red-800',
                                         'sent_to_siesa' => 'bg-purple-100 text-purple-800',
@@ -66,6 +67,7 @@
                                     $statusLabels = [
                                         'pending' => 'Pendiente',
                                         'processing' => 'Procesando',
+                                        'rpa_processing' => 'Procesando en RPA',
                                         'completed' => 'Completado',
                                         'failed' => 'Fallido',
                                         'sent_to_siesa' => 'Enviado a SIESA',

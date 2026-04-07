@@ -10,6 +10,7 @@
         $statusLabels = [
             'pending' => 'Pendiente',
             'processing' => 'Procesando',
+            'rpa_processing' => 'Procesando en RPA',
             'completed' => 'Completado',
             'failed' => 'Fallido',
             'sent_to_siesa' => 'Enviado a SIESA',
@@ -63,6 +64,8 @@
                             </option>
                             <option value="processing" {{ request('status') == 'processing' ? 'selected' : '' }}>
                                 Procesando</option>
+                            <option value="rpa_processing" {{ request('status') == 'rpa_processing' ? 'selected' : '' }}>
+                                Procesando en RPA</option>
                             <option value="completed" {{ request('status') == 'completed' ? 'selected' : '' }}>
                                 Completado</option>
                             <option value="sent_to_siesa" {{ request('status') == 'sent_to_siesa' ? 'selected' : '' }}>
@@ -152,6 +155,7 @@
                                     $statusColors = [
                                         'pending' => 'bg-amber-100 text-amber-800',
                                         'processing' => 'bg-blue-100 text-blue-800',
+                                        'rpa_processing' => 'bg-indigo-100 text-indigo-800',
                                         'completed' => 'bg-green-100 text-green-800',
                                         'failed' => 'bg-red-100 text-red-800',
                                         'sent_to_siesa' => 'bg-purple-100 text-purple-800',
@@ -238,7 +242,7 @@
                                                 </svg>
                                             </a>
 
-                                            @if (!in_array($order->status->value, ['completed', 'sent_to_siesa']))
+                                            @if (!in_array($order->status->value, ['completed', 'sent_to_siesa', 'rpa_processing']))
                                                 <form method="POST"
                                                     action="{{ route('admin.orders.reprocess', $order) }}"
                                                     onsubmit="return confirm('¿Reprocesar este pedido ahora?');">

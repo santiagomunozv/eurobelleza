@@ -18,6 +18,11 @@ class OrderRepository
         return Order::where('shopify_order_id', $shopifyOrderId)->first();
     }
 
+    public function findByShopifyOrderNumber(string $shopifyOrderNumber): ?Order
+    {
+        return Order::where('shopify_order_number', $shopifyOrderNumber)->first();
+    }
+
     public function create(array $data): Order
     {
         return Order::create($data);
@@ -60,10 +65,20 @@ class OrderRepository
 
         if ($errorMessage !== null) {
             $data['error_message'] = $errorMessage;
+        } elseif (in_array($status, [
+            OrderStatusEnum::PENDING,
+            OrderStatusEnum::PROCESSING,
+            OrderStatusEnum::RPA_PROCESSING,
+            OrderStatusEnum::SENT_TO_SIESA,
+            OrderStatusEnum::COMPLETED,
+        ], true)) {
+            $data['error_message'] = null;
         }
 
-        if (in_array($status, [OrderStatusEnum::COMPLETED, OrderStatusEnum::SENT_TO_SIESA])) {
+        if ($status === OrderStatusEnum::COMPLETED) {
             $data['processed_at'] = now();
+        } else {
+            $data['processed_at'] = null;
         }
 
         return $order->update($data);

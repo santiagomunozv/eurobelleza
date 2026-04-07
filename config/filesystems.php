@@ -73,6 +73,16 @@ return [
             'throw' => true,
         ],
 
+        'siesa_resultados' => [
+            'driver' => 's3',
+            'key' => env('SIESA_S3_KEY'),
+            'secret' => env('SIESA_S3_SECRET'),
+            'region' => env('SIESA_S3_REGION', 'us-east-2'),
+            'bucket' => env('SIESA_S3_BUCKET', 'eurobelleza-siesa'),
+            'root' => 'resultados',
+            'throw' => true,
+        ],
+
     ],
 
     /*

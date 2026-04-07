@@ -76,5 +76,12 @@ class OrderSeeder extends Seeder
             'error_message' => 'Error al generar archivo plano: formato inválido',
             'attempts' => 3,
         ]);
+
+        Order::create([
+            'shopify_order_id' => '5398036938987',
+            'shopify_order_number' => '3667',
+            'order_json' => array_merge($baseOrderJson, ['id' => 5398036938987, 'order_number' => 3667]),
+            'status' => OrderStatusEnum::RPA_PROCESSING,
+        ]);
     }
 }

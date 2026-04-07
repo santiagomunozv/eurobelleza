@@ -6,6 +6,7 @@ enum OrderStatusEnum: string
 {
   case PENDING = 'pending';
   case PROCESSING = 'processing';
+  case RPA_PROCESSING = 'rpa_processing';
   case COMPLETED = 'completed';
   case FAILED = 'failed';
   case SENT_TO_SIESA = 'sent_to_siesa';
@@ -29,6 +30,11 @@ enum OrderStatusEnum: string
   public function isCompleted(): bool
   {
     return $this === self::COMPLETED;
+  }
+
+  public function isRpaProcessing(): bool
+  {
+    return $this === self::RPA_PROCESSING;
   }
 
   public function isFailed(): bool

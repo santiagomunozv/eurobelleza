@@ -71,10 +71,12 @@ class OrderController extends Controller
         OrderConfigurationValidator $configValidator,
         ShopifyApiClient $shopifyApiClient
     ): RedirectResponse {
-        if ($order->status === OrderStatusEnum::COMPLETED) {
+        if (in_array($order->status, [OrderStatusEnum::COMPLETED, OrderStatusEnum::RPA_PROCESSING], true)) {
             return redirect()
                 ->route('admin.orders.index')
-                ->with('error', 'El pedido ya está completado y no requiere reproceso.');
+                ->with('error', $order->status === OrderStatusEnum::COMPLETED
+                    ? 'El pedido ya está completado y no requiere reproceso.'
+                    : 'El pedido está siendo procesado por el RPA y no admite reproceso manual.');
         }
 
         try {
@@ -169,6 +171,7 @@ class OrderController extends Controller
         $statusLabels = [
             'pending' => 'Pendiente',
             'processing' => 'Procesando',
+            'rpa_processing' => 'Procesando en RPA',
             'completed' => 'Completado',
             'failed' => 'Fallido',
             'sent_to_siesa' => 'Enviado a SIESA',
