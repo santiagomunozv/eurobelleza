@@ -6,6 +6,7 @@ use App\Enums\OrderStatusEnum;
 use App\Http\Controllers\Controller;
 use App\Jobs\ProcessShopifyOrder;
 use App\Models\Order;
+use App\Models\SiesaPaymentGatewayMapping;
 use App\Services\OrderConfigurationValidator;
 use App\Services\OrderLogService;
 use App\Services\Shopify\ShopifyApiClient;
@@ -203,6 +204,7 @@ class OrderController extends Controller
                 'Cliente Nombre',
                 'Cliente Email',
                 'Total (COP)',
+                'Flete (COP)',
                 'Estado Pago',
                 'Método Pago',
                 'Estado',
@@ -215,7 +217,27 @@ class OrderController extends Controller
             foreach ($orders as $order) {
                 $financialStatus = $order->order_json['financial_status'] ?? 'N/A';
                 $paymentGateways = $order->order_json['payment_gateway_names'] ?? [];
-                $paymentMethod = !empty($paymentGateways) ? implode(', ', $paymentGateways) : 'N/A';
+                $paymentMethod = !empty($paymentGateways) ? $paymentGateways[0] : 'N/A';
+
+                // Si el payment gateway es "manual", buscar en tags
+                if (strtolower($paymentMethod) === 'manual') {
+                    $tags = $order->order_json['tags'] ?? '';
+                    if (!empty($tags)) {
+                        $words = preg_split('/[\s,]+/', strtolower($tags));
+                        foreach ($words as $word) {
+                            if (strlen($word) < 3) {
+                                continue;
+                            }
+                            $gatewayMapping = SiesaPaymentGatewayMapping::whereRaw('LOWER(payment_gateway_name) LIKE ?', ["%{$word}%"])->first();
+                            if ($gatewayMapping) {
+                                $paymentMethod = $gatewayMapping->payment_gateway_name;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                $shippingAmount = floatval($order->order_json['total_shipping_price_set']['shop_money']['amount'] ?? 0);
 
                 fputcsv($handle, [
                     $order->shopify_order_number,
@@ -223,6 +245,7 @@ class OrderController extends Controller
                     $order->customer_name ?? '',
                     $order->customer_email ?? '',
                     $order->total_price,
+                    $shippingAmount,
                     $financialStatusLabels[$financialStatus] ?? $financialStatus,
                     $paymentMethod,
                     $statusLabels[$order->status->value] ?? $order->status->value,

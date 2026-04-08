@@ -64,7 +64,8 @@
                             </option>
                             <option value="processing" {{ request('status') == 'processing' ? 'selected' : '' }}>
                                 Procesando</option>
-                            <option value="rpa_processing" {{ request('status') == 'rpa_processing' ? 'selected' : '' }}>
+                            <option value="rpa_processing"
+                                {{ request('status') == 'rpa_processing' ? 'selected' : '' }}>
                                 Procesando en RPA</option>
                             <option value="completed" {{ request('status') == 'completed' ? 'selected' : '' }}>
                                 Completado</option>
@@ -142,6 +143,7 @@
                                 <th class="ui-table-compact-th">Pedido</th>
                                 <th class="ui-table-compact-th">Cliente</th>
                                 <th class="ui-table-compact-th">Total</th>
+                                <th class="ui-table-compact-th">Flete</th>
                                 <th class="ui-table-compact-th">Pago</th>
                                 <th class="ui-table-compact-th">Método</th>
                                 <th class="ui-table-compact-th">Estado</th>
@@ -182,6 +184,31 @@
                                     ];
                                     $paymentGateways = $order->order_json['payment_gateway_names'] ?? [];
                                     $firstPayment = !empty($paymentGateways) ? $paymentGateways[0] : 'N/A';
+
+                                    // Si el payment gateway es "manual", buscar en tags
+                                    if (strtolower($firstPayment) === 'manual') {
+                                        $tags = $order->order_json['tags'] ?? '';
+                                        if (!empty($tags)) {
+                                            $words = preg_split('/[\s,]+/', strtolower($tags));
+                                            foreach ($words as $word) {
+                                                if (strlen($word) < 3) {
+                                                    continue;
+                                                }
+                                                $gatewayMapping = \App\Models\SiesaPaymentGatewayMapping::whereRaw(
+                                                    'LOWER(payment_gateway_name) LIKE ?',
+                                                    ["%{$word}%"],
+                                                )->first();
+                                                if ($gatewayMapping) {
+                                                    $firstPayment = $gatewayMapping->payment_gateway_name;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    $shippingAmount = floatval(
+                                        $order->order_json['total_shipping_price_set']['shop_money']['amount'] ?? 0,
+                                    );
                                 @endphp
                                 <tr class="align-top">
                                     <td class="ui-table-compact-td">
@@ -198,6 +225,11 @@
                                     <td class="ui-table-compact-td">
                                         <p class="font-semibold text-[var(--color-text)]">
                                             ${{ number_format($order->total_price, 0, '', '.') }}</p>
+                                        <p class="text-xs text-[var(--color-text-muted)]">COP</p>
+                                    </td>
+                                    <td class="ui-table-compact-td">
+                                        <p class="font-semibold text-[var(--color-text)]">
+                                            ${{ number_format($shippingAmount, 0, '', '.') }}</p>
                                         <p class="text-xs text-[var(--color-text-muted)]">COP</p>
                                     </td>
                                     <td class="ui-table-compact-td">
@@ -263,7 +295,7 @@
                                 </tr>
                             @empty
                                 <tr>
-                                    <td colspan="8" class="px-4 py-8 text-center ui-section-subtitle">
+                                    <td colspan="9" class="px-4 py-8 text-center ui-section-subtitle">
                                         No se encontraron pedidos para el criterio actual.
                                     </td>
                                 </tr>
