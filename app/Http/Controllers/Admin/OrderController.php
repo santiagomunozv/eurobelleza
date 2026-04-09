@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Jobs\ProcessShopifyOrder;
 use App\Models\Order;
 use App\Models\SiesaPaymentGatewayMapping;
+use App\Models\SiesaWarehouseMapping;
 use App\Services\OrderConfigurationValidator;
 use App\Services\OrderLogService;
 use App\Services\Shopify\ShopifyApiClient;
@@ -43,7 +44,30 @@ class OrderController extends Controller
 
         $orders = $query->orderBy('created_at', 'desc')->paginate(15);
 
-        return view('admin.orders.index', compact('orders'));
+        // Cargar todos los payment gateways para optimizar búsquedas
+        $allPaymentGateways = SiesaPaymentGatewayMapping::all()->keyBy(function ($item) {
+            return strtolower($item->payment_gateway_name);
+        });
+
+        // Cargar warehouses una sola vez para evitar N+1 queries
+        $locationIds = [];
+        foreach ($orders as $order) {
+            $fulfillments = $order->order_json['fulfillments'] ?? [];
+            $locationId = $fulfillments[0]['location_id'] ?? null;
+            if ($locationId) {
+                $locationIds[] = $locationId;
+            }
+        }
+
+        $warehouseMappings = [];
+        if (!empty($locationIds)) {
+            $mappings = SiesaWarehouseMapping::whereIn('shopify_location_id', array_unique($locationIds))->get();
+            foreach ($mappings as $mapping) {
+                $warehouseMappings[$mapping->shopify_location_id] = $mapping->shopify_location_name;
+            }
+        }
+
+        return view('admin.orders.index', compact('orders', 'warehouseMappings', 'allPaymentGateways'));
     }
 
     public function show(Order $order): View
@@ -191,7 +215,30 @@ class OrderController extends Controller
 
         $fileName = 'pedidos_' . now()->format('Y-m-d_His') . '.csv';
 
-        return response()->streamDownload(function () use ($orders, $statusLabels, $financialStatusLabels) {
+        // Cargar todos los payment gateways para optimizar búsquedas
+        $allPaymentGateways = SiesaPaymentGatewayMapping::all()->keyBy(function ($item) {
+            return strtolower($item->payment_gateway_name);
+        });
+
+        // Cargar warehouses una sola vez para evitar N+1 queries
+        $locationIds = [];
+        foreach ($orders as $order) {
+            $fulfillments = $order->order_json['fulfillments'] ?? [];
+            $locationId = $fulfillments[0]['location_id'] ?? null;
+            if ($locationId) {
+                $locationIds[] = $locationId;
+            }
+        }
+
+        $warehouseMappings = [];
+        if (!empty($locationIds)) {
+            $mappings = SiesaWarehouseMapping::whereIn('shopify_location_id', array_unique($locationIds))->get();
+            foreach ($mappings as $mapping) {
+                $warehouseMappings[$mapping->shopify_location_id] = $mapping->shopify_location_name;
+            }
+        }
+
+        return response()->streamDownload(function () use ($orders, $statusLabels, $financialStatusLabels, $warehouseMappings, $allPaymentGateways) {
             $handle = fopen('php://output', 'w');
 
             // BOM para UTF-8 (para que Excel reconozca tildes)
@@ -205,6 +252,7 @@ class OrderController extends Controller
                 'Cliente Email',
                 'Total (COP)',
                 'Flete (COP)',
+                'Bodega',
                 'Estado Pago',
                 'Método Pago',
                 'Estado',
@@ -219,7 +267,7 @@ class OrderController extends Controller
                 $paymentGateways = $order->order_json['payment_gateway_names'] ?? [];
                 $paymentMethod = !empty($paymentGateways) ? $paymentGateways[0] : 'N/A';
 
-                // Si el payment gateway es "manual", buscar en tags
+                // Si el payment gateway es "manual", buscar en tags usando el array precargado
                 if (strtolower($paymentMethod) === 'manual') {
                     $tags = $order->order_json['tags'] ?? '';
                     if (!empty($tags)) {
@@ -228,16 +276,26 @@ class OrderController extends Controller
                             if (strlen($word) < 3) {
                                 continue;
                             }
-                            $gatewayMapping = SiesaPaymentGatewayMapping::whereRaw('LOWER(payment_gateway_name) LIKE ?', ["%{$word}%"])->first();
-                            if ($gatewayMapping) {
-                                $paymentMethod = $gatewayMapping->payment_gateway_name;
-                                break;
+                            // Buscar en el array precargado
+                            foreach ($allPaymentGateways as $gatewayKey => $gatewayMapping) {
+                                if (str_contains($gatewayKey, $word)) {
+                                    $paymentMethod = $gatewayMapping->payment_gateway_name;
+                                    break 2;
+                                }
                             }
                         }
                     }
                 }
 
                 $shippingAmount = floatval($order->order_json['total_shipping_price_set']['shop_money']['amount'] ?? 0);
+
+                // Obtener bodega desde el array precargado
+                $warehouseName = '';
+                $fulfillments = $order->order_json['fulfillments'] ?? [];
+                $locationId = $fulfillments[0]['location_id'] ?? null;
+                if ($locationId && isset($warehouseMappings[$locationId])) {
+                    $warehouseName = $warehouseMappings[$locationId];
+                }
 
                 fputcsv($handle, [
                     $order->shopify_order_number,
@@ -246,6 +304,7 @@ class OrderController extends Controller
                     $order->customer_email ?? '',
                     $order->total_price,
                     $shippingAmount,
+                    $warehouseName,
                     $financialStatusLabels[$financialStatus] ?? $financialStatus,
                     $paymentMethod,
                     $statusLabels[$order->status->value] ?? $order->status->value,

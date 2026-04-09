@@ -144,6 +144,7 @@
                                 <th class="ui-table-compact-th">Cliente</th>
                                 <th class="ui-table-compact-th">Total</th>
                                 <th class="ui-table-compact-th">Flete</th>
+                                <th class="ui-table-compact-th">Bodega</th>
                                 <th class="ui-table-compact-th">Pago</th>
                                 <th class="ui-table-compact-th">Método</th>
                                 <th class="ui-table-compact-th">Estado</th>
@@ -185,7 +186,7 @@
                                     $paymentGateways = $order->order_json['payment_gateway_names'] ?? [];
                                     $firstPayment = !empty($paymentGateways) ? $paymentGateways[0] : 'N/A';
 
-                                    // Si el payment gateway es "manual", buscar en tags
+                                    // Si el payment gateway es "manual", buscar en tags usando el array precargado
                                     if (strtolower($firstPayment) === 'manual') {
                                         $tags = $order->order_json['tags'] ?? '';
                                         if (!empty($tags)) {
@@ -194,13 +195,12 @@
                                                 if (strlen($word) < 3) {
                                                     continue;
                                                 }
-                                                $gatewayMapping = \App\Models\SiesaPaymentGatewayMapping::whereRaw(
-                                                    'LOWER(payment_gateway_name) LIKE ?',
-                                                    ["%{$word}%"],
-                                                )->first();
-                                                if ($gatewayMapping) {
-                                                    $firstPayment = $gatewayMapping->payment_gateway_name;
-                                                    break;
+                                                // Buscar en el array precargado
+                                                foreach ($allPaymentGateways as $gatewayKey => $gatewayMapping) {
+                                                    if (str_contains($gatewayKey, $word)) {
+                                                        $firstPayment = $gatewayMapping->payment_gateway_name;
+                                                        break 2;
+                                                    }
                                                 }
                                             }
                                         }
@@ -209,6 +209,14 @@
                                     $shippingAmount = floatval(
                                         $order->order_json['total_shipping_price_set']['shop_money']['amount'] ?? 0,
                                     );
+
+                                    // Obtener bodega desde el array precargado
+                                    $warehouseName = '';
+                                    $fulfillments = $order->order_json['fulfillments'] ?? [];
+                                    $locationId = $fulfillments[0]['location_id'] ?? null;
+                                    if ($locationId && isset($warehouseMappings[$locationId])) {
+                                        $warehouseName = $warehouseMappings[$locationId];
+                                    }
                                 @endphp
                                 <tr class="align-top">
                                     <td class="ui-table-compact-td">
@@ -231,6 +239,10 @@
                                         <p class="font-semibold text-[var(--color-text)]">
                                             ${{ number_format($shippingAmount, 0, '', '.') }}</p>
                                         <p class="text-xs text-[var(--color-text-muted)]">COP</p>
+                                    </td>
+                                    <td class="ui-table-compact-td">
+                                        <p class="text-[var(--color-text)]">
+                                            {{ $warehouseName ?: '-' }}</p>
                                     </td>
                                     <td class="ui-table-compact-td">
                                         <span
@@ -295,7 +307,7 @@
                                 </tr>
                             @empty
                                 <tr>
-                                    <td colspan="9" class="px-4 py-8 text-center ui-section-subtitle">
+                                    <td colspan="10" class="px-4 py-8 text-center ui-section-subtitle">
                                         No se encontraron pedidos para el criterio actual.
                                     </td>
                                 </tr>
