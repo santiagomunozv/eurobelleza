@@ -7,6 +7,7 @@ use App\Models\Order;
 use App\Repositories\OrderRepository;
 use App\Services\OrderLogService;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class SiesaRunResultProcessor
 {
@@ -59,6 +60,7 @@ class SiesaRunResultProcessor
                 'result_path' => $resultPath,
                 'file_name' => $fileName,
             ]);
+            $this->deleteSourceOrderFile($fileName, $runId);
             $completed++;
         }
 
@@ -84,6 +86,7 @@ class SiesaRunResultProcessor
                 'p99_key' => $errorEntry['p99_key'],
                 'errors' => $errorLines,
             ]);
+            $this->deleteSourceOrderFile($fileName, $runId);
             $failed++;
         }
 
@@ -152,5 +155,22 @@ class SiesaRunResultProcessor
         $normalizedOrderNumber = $normalizedOrderNumber === '' ? '0' : $normalizedOrderNumber;
 
         return $this->orderRepository->findByShopifyOrderNumber($normalizedOrderNumber);
+    }
+
+    private function deleteSourceOrderFile(string $fileName, string $runId): void
+    {
+        try {
+            if (!Storage::disk('siesa_pedidos')->exists($fileName)) {
+                return;
+            }
+
+            Storage::disk('siesa_pedidos')->delete($fileName);
+        } catch (\Throwable $e) {
+            Log::warning('No se pudo eliminar el archivo fuente de pedidos en S3', [
+                'run_id' => $runId,
+                'file_name' => $fileName,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 }

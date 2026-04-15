@@ -14,10 +14,12 @@ class SiesaRunResultProcessingTest extends TestCase
 
     public function test_it_marks_orders_completed_from_rpa_result_file(): void
     {
+        Storage::fake('siesa_pedidos');
         Storage::fake('siesa_resultados');
         Storage::fake('siesa_errores');
 
         $order = $this->createOrder('3663', OrderStatusEnum::SENT_TO_SIESA);
+        Storage::disk('siesa_pedidos')->put('00003663.PE0', 'contenido');
 
         Storage::disk('siesa_resultados')->put('run_20260406_0630.json', json_encode([
             'run_id' => '2026-04-06_0630',
@@ -34,14 +36,17 @@ class SiesaRunResultProcessingTest extends TestCase
         $this->assertSame(OrderStatusEnum::COMPLETED, $order->status);
         $this->assertNotNull($order->processed_at);
         Storage::disk('siesa_resultados')->assertMissing('run_20260406_0630.json');
+        Storage::disk('siesa_pedidos')->assertMissing('00003663.PE0');
     }
 
     public function test_it_marks_orders_with_siesa_error_from_rpa_result_file(): void
     {
+        Storage::fake('siesa_pedidos');
         Storage::fake('siesa_resultados');
         Storage::fake('siesa_errores');
 
         $order = $this->createOrder('3664', OrderStatusEnum::SENT_TO_SIESA);
+        Storage::disk('siesa_pedidos')->put('00003664.PE0', 'contenido');
 
         Storage::disk('siesa_resultados')->put('run_20260406_1300.json', json_encode([
             'run_id' => '2026-04-06_1300',
@@ -65,6 +70,7 @@ class SiesaRunResultProcessingTest extends TestCase
         $this->assertSame('Cliente inválido | Bodega sin configuración', $order->error_message);
         $this->assertNull($order->processed_at);
         Storage::disk('siesa_resultados')->assertMissing('run_20260406_1300.json');
+        Storage::disk('siesa_pedidos')->assertMissing('00003664.PE0');
     }
 
     private function createOrder(string $orderNumber, OrderStatusEnum $status): Order
