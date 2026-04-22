@@ -20,8 +20,8 @@ class Kernel extends ConsoleKernel
             ->dailyAt('02:00')
             ->timezone('America/Bogota');
 
-        // Refresco y reproceso de pedidos no completados (últimos 30 días) a las 3:00 AM
-        $schedule->command('orders:refresh --non-completed --days=30 --reprocess')
+        // Refresco y reproceso de pedidos pending/failed recientes a las 3:00 AM
+        $schedule->command('orders:refresh --non-completed --days=2 --reprocess')
             ->dailyAt('03:00')
             ->timezone('America/Bogota');
 

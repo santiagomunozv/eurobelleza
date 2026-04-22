@@ -90,11 +90,10 @@ class RefreshOrderData extends Command
                     'status_before' => $order->status->value,
                 ]);
 
-                // Si tiene opción de reprocesar y el pedido no está completado
-                if ($this->option('reprocess') && !in_array($order->status, [
-                    OrderStatusEnum::COMPLETED,
-                    OrderStatusEnum::SENT_TO_SIESA,
-                    OrderStatusEnum::RPA_PROCESSING,
+                // El reproceso automático solo debe reintentar pedidos pendientes o fallidos.
+                if ($this->option('reprocess') && in_array($order->status, [
+                    OrderStatusEnum::PENDING,
+                    OrderStatusEnum::FAILED,
                 ], true)) {
                     // Validar si ahora tiene configuración completa
                     $validation = $this->configValidator->validate($freshData);
@@ -194,13 +193,20 @@ class RefreshOrderData extends Command
         }
 
         if ($this->option('non-completed')) {
-            return Order::whereNotIn('status', [
+            $query = Order::where('created_at', '>=', $fromDate);
+
+            if ($this->option('reprocess')) {
+                return $query->whereIn('status', [
+                    OrderStatusEnum::PENDING->value,
+                    OrderStatusEnum::FAILED->value,
+                ])->get();
+            }
+
+            return $query->whereNotIn('status', [
                 OrderStatusEnum::COMPLETED->value,
                 OrderStatusEnum::SENT_TO_SIESA->value,
                 OrderStatusEnum::RPA_PROCESSING->value,
-            ])
-                ->where('created_at', '>=', $fromDate)
-                ->get();
+            ])->get();
         }
 
         $this->error('❌ Debes especificar --ids, --pending-without-fulfillments o --non-completed');
