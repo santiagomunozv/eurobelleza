@@ -82,6 +82,12 @@ class CheckSiesaErrors extends Command
                 $failedOrders += $summary['failed'];
 
                 $note = "run_id={$summary['run_id']} completados={$summary['completed']} con_error={$summary['failed']}";
+                if (($summary['warnings'] ?? 0) > 0) {
+                    $note .= " con_advertencia={$summary['warnings']}";
+                }
+                if (($summary['unresolved'] ?? 0) > 0) {
+                    $note .= " no_resueltos={$summary['unresolved']}";
+                }
                 if (!empty($summary['missing_files'])) {
                     $note .= ' faltantes=' . implode(',', $summary['missing_files']);
                 }

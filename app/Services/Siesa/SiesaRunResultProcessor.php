@@ -21,12 +21,16 @@ class SiesaRunResultProcessor
         $runId = (string) ($payload['run_id'] ?? pathinfo($resultPath, PATHINFO_FILENAME));
         $filesAttempted = $this->normalizeFileList($payload['files_attempted'] ?? []);
         $filesWithoutError = $this->normalizeFileList($payload['files_without_error'] ?? []);
+        $filesWithWarning = $this->normalizeWarningEntries($payload['files_with_warning'] ?? []);
         $filesWithError = $this->normalizeErrorEntries($payload['files_with_error'] ?? []);
+        $filesUnresolved = $this->normalizeUnresolvedEntries($payload['files_unresolved'] ?? []);
         $fatalError = $payload['fatal_error'] ?? null;
 
         $processed = 0;
         $completed = 0;
         $failed = 0;
+        $warnings = 0;
+        $unresolved = 0;
         $missing = [];
 
         foreach ($filesAttempted as $fileName) {
@@ -64,6 +68,28 @@ class SiesaRunResultProcessor
             $completed++;
         }
 
+        foreach ($filesWithWarning as $warningEntry) {
+            $fileName = $warningEntry['file_name'];
+            $order = $this->resolveOrderFromFileName($fileName);
+
+            if (!$order) {
+                $missing[] = $fileName;
+                continue;
+            }
+
+            $this->orderRepository->updateStatus($order, OrderStatusEnum::COMPLETED);
+            $this->orderLogService->logWarning($order, 'rpa_run_completed_with_warning', [
+                'run_id' => $runId,
+                'result_path' => $resultPath,
+                'file_name' => $fileName,
+                'p99_key' => $warningEntry['p99_key'],
+                'warnings' => $warningEntry['warnings'],
+            ]);
+            $this->deleteSourceOrderFile($fileName, $runId);
+            $completed++;
+            $warnings++;
+        }
+
         foreach ($filesWithError as $errorEntry) {
             $fileName = $errorEntry['file_name'];
             $order = $this->resolveOrderFromFileName($fileName);
@@ -90,6 +116,27 @@ class SiesaRunResultProcessor
             $failed++;
         }
 
+        foreach ($filesUnresolved as $unresolvedEntry) {
+            $fileName = $unresolvedEntry['file_name'];
+            $order = $this->resolveOrderFromFileName($fileName);
+
+            if (!$order) {
+                $missing[] = $fileName;
+                continue;
+            }
+
+            $this->orderRepository->updateStatus($order, OrderStatusEnum::RPA_PROCESSING);
+            $this->orderLogService->logWarning($order, 'rpa_run_unresolved_result', [
+                'run_id' => $runId,
+                'result_path' => $resultPath,
+                'file_name' => $fileName,
+                'p99_key' => $unresolvedEntry['p99_key'],
+                'reason' => $unresolvedEntry['reason'],
+            ]);
+            $this->deleteSourceOrderFile($fileName, $runId);
+            $unresolved++;
+        }
+
         if ($fatalError) {
             Log::warning('Corrida RPA finalizada con fatal_error', [
                 'run_id' => $runId,
@@ -103,6 +150,8 @@ class SiesaRunResultProcessor
             'processed' => $processed,
             'completed' => $completed,
             'failed' => $failed,
+            'warnings' => $warnings,
+            'unresolved' => $unresolved,
             'missing_files' => array_values(array_unique($missing)),
             'fatal_error' => $fatalError,
         ];
@@ -141,6 +190,64 @@ class SiesaRunResultProcessor
                         ->filter()
                         ->values()
                         ->all(),
+                ];
+            })
+            ->filter(fn($entry) => !empty($entry['file_name']))
+            ->values()
+            ->all();
+    }
+
+    private function normalizeWarningEntries(array $entries): array
+    {
+        return collect($entries)
+            ->map(function ($entry) {
+                if (is_string($entry)) {
+                    return [
+                        'file_name' => trim($entry),
+                        'p99_key' => null,
+                        'warnings' => [],
+                    ];
+                }
+
+                if (!is_array($entry)) {
+                    return null;
+                }
+
+                return [
+                    'file_name' => trim((string) ($entry['file'] ?? $entry['file_name'] ?? '')),
+                    'p99_key' => $entry['p99_key'] ?? null,
+                    'warnings' => collect($entry['warnings'] ?? [])
+                        ->map(fn($line) => trim((string) $line))
+                        ->filter()
+                        ->values()
+                        ->all(),
+                ];
+            })
+            ->filter(fn($entry) => !empty($entry['file_name']))
+            ->values()
+            ->all();
+    }
+
+    private function normalizeUnresolvedEntries(array $entries): array
+    {
+        return collect($entries)
+            ->map(function ($entry) {
+                if (is_string($entry)) {
+                    return [
+                        'file_name' => trim($entry),
+                        'p99_key' => null,
+                        'reason' => null,
+                    ];
+                }
+
+                if (!is_array($entry)) {
+                    return null;
+                }
+
+                return [
+                    'file_name' => trim((string) ($entry['file'] ?? $entry['file_name'] ?? '')),
+                    'p99_key' => $entry['p99_key'] ?? null,
+                    'reason' => $entry['reason'] ?? null,
                 ];
             })
             ->filter(fn($entry) => !empty($entry['file_name']))
