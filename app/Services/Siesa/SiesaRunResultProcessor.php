@@ -85,7 +85,7 @@ class SiesaRunResultProcessor
                 'p99_key' => $warningEntry['p99_key'],
                 'warnings' => $warningEntry['warnings'],
             ]);
-            $this->deleteSourceOrderFile($fileName, $runId);
+            $this->deleteSourceOrderFile($fileName, $runId, $warningEntry['s3_key']);
             $completed++;
             $warnings++;
         }
@@ -112,7 +112,7 @@ class SiesaRunResultProcessor
                 'p99_key' => $errorEntry['p99_key'],
                 'errors' => $errorLines,
             ]);
-            $this->deleteSourceOrderFile($fileName, $runId);
+            $this->deleteSourceOrderFile($fileName, $runId, $errorEntry['s3_key']);
             $failed++;
         }
 
@@ -133,7 +133,7 @@ class SiesaRunResultProcessor
                 'p99_key' => $unresolvedEntry['p99_key'],
                 'reason' => $unresolvedEntry['reason'],
             ]);
-            $this->deleteSourceOrderFile($fileName, $runId);
+            $this->deleteSourceOrderFile($fileName, $runId, $unresolvedEntry['s3_key']);
             $unresolved++;
         }
 
@@ -173,6 +173,7 @@ class SiesaRunResultProcessor
                 if (is_string($entry)) {
                     return [
                         'file_name' => trim($entry),
+                        's3_key' => null,
                         'p99_key' => null,
                         'errors' => [],
                     ];
@@ -184,6 +185,7 @@ class SiesaRunResultProcessor
 
                 return [
                     'file_name' => trim((string) ($entry['file'] ?? $entry['file_name'] ?? '')),
+                    's3_key' => $entry['s3_key'] ?? null,
                     'p99_key' => $entry['p99_key'] ?? null,
                     'errors' => collect($entry['errors'] ?? [])
                         ->map(fn($line) => trim((string) $line))
@@ -204,6 +206,7 @@ class SiesaRunResultProcessor
                 if (is_string($entry)) {
                     return [
                         'file_name' => trim($entry),
+                        's3_key' => null,
                         'p99_key' => null,
                         'warnings' => [],
                     ];
@@ -215,6 +218,7 @@ class SiesaRunResultProcessor
 
                 return [
                     'file_name' => trim((string) ($entry['file'] ?? $entry['file_name'] ?? '')),
+                    's3_key' => $entry['s3_key'] ?? null,
                     'p99_key' => $entry['p99_key'] ?? null,
                     'warnings' => collect($entry['warnings'] ?? [])
                         ->map(fn($line) => trim((string) $line))
@@ -235,6 +239,7 @@ class SiesaRunResultProcessor
                 if (is_string($entry)) {
                     return [
                         'file_name' => trim($entry),
+                        's3_key' => null,
                         'p99_key' => null,
                         'reason' => null,
                     ];
@@ -246,6 +251,7 @@ class SiesaRunResultProcessor
 
                 return [
                     'file_name' => trim((string) ($entry['file'] ?? $entry['file_name'] ?? '')),
+                    's3_key' => $entry['s3_key'] ?? null,
                     'p99_key' => $entry['p99_key'] ?? null,
                     'reason' => $entry['reason'] ?? null,
                 ];
@@ -264,20 +270,31 @@ class SiesaRunResultProcessor
         return $this->orderRepository->findByShopifyOrderNumber($normalizedOrderNumber);
     }
 
-    private function deleteSourceOrderFile(string $fileName, string $runId): void
+    private function deleteSourceOrderFile(string $fileName, string $runId, ?string $s3Key = null): void
     {
-        try {
-            if (!Storage::disk('siesa_pedidos')->exists($fileName)) {
-                return;
-            }
+        $path = $this->normalizeSiesaPedidoPath($s3Key ?: $fileName);
 
-            Storage::disk('siesa_pedidos')->delete($fileName);
+        try {
+            Storage::disk('siesa_pedidos')->delete($path);
         } catch (\Throwable $e) {
             Log::warning('No se pudo eliminar el archivo fuente de pedidos en S3', [
                 'run_id' => $runId,
                 'file_name' => $fileName,
+                's3_key' => $s3Key,
+                'delete_path' => $path,
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    private function normalizeSiesaPedidoPath(string $path): string
+    {
+        $path = ltrim(trim($path), '/');
+
+        if (str_starts_with($path, 'pedidos/')) {
+            return substr($path, strlen('pedidos/'));
+        }
+
+        return $path;
     }
 }
