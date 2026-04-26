@@ -213,7 +213,10 @@ class ShopifyOrderSyncService
         }
 
         // Obtener pedidos no completados de la BD que coincidan con los IDs de Shopify
-        $nonCompletedOrders = Order::where('status', '!=', OrderStatusEnum::COMPLETED->value)
+        $nonCompletedOrders = Order::whereNotIn('status', [
+                OrderStatusEnum::COMPLETED->value,
+                OrderStatusEnum::PAYMENT_EXPIRED->value,
+            ])
             ->whereIn('shopify_order_id', array_keys($shopifyOrdersMap))
             ->get();
 

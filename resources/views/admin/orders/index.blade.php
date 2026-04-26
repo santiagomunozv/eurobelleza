@@ -15,6 +15,7 @@
             'failed' => 'Fallido',
             'sent_to_siesa' => 'Enviado a SIESA',
             'siesa_error' => 'Error SIESA',
+            'payment_expired' => 'Vencido',
         ];
     @endphp
 
@@ -74,6 +75,8 @@
                             <option value="siesa_error" {{ request('status') == 'siesa_error' ? 'selected' : '' }}>
                                 Error
                                 SIESA</option>
+                            <option value="payment_expired" {{ request('status') == 'payment_expired' ? 'selected' : '' }}>
+                                Vencido</option>
                             <option value="failed" {{ request('status') == 'failed' ? 'selected' : '' }}>Fallido
                             </option>
                         </select>
@@ -163,6 +166,7 @@
                                         'failed' => 'bg-red-100 text-red-800',
                                         'sent_to_siesa' => 'bg-purple-100 text-purple-800',
                                         'siesa_error' => 'bg-orange-100 text-orange-800',
+                                        'payment_expired' => 'bg-slate-100 text-slate-800',
                                     ];
                                     $financialStatus = $order->order_json['financial_status'] ?? 'N/A';
                                     $financialStatusColors = [
@@ -172,6 +176,7 @@
                                         'partially_paid' => 'bg-orange-100 text-orange-800',
                                         'refunded' => 'bg-purple-100 text-purple-800',
                                         'voided' => 'bg-gray-200 text-gray-800',
+                                        'expired' => 'bg-slate-100 text-slate-800',
                                         'partially_refunded' => 'bg-purple-100 text-purple-800',
                                     ];
                                     $financialStatusLabels = [
@@ -181,6 +186,7 @@
                                         'partially_paid' => 'Parcial',
                                         'refunded' => 'Reembolsado',
                                         'voided' => 'Anulado',
+                                        'expired' => 'Vencido',
                                         'partially_refunded' => 'Reemb. Parcial',
                                     ];
                                     $paymentGateways = $order->order_json['payment_gateway_names'] ?? [];

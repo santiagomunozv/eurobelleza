@@ -12,6 +12,6 @@ return new class extends Migration
 
     public function down(): void
     {
-        DB::statement("ALTER TABLE orders MODIFY COLUMN status ENUM('pending', 'processing', 'completed', 'failed', 'sent_to_siesa', 'siesa_error') NOT NULL DEFAULT 'pending'");
+        DB::statement("ALTER TABLE orders MODIFY COLUMN status ENUM('pending', 'processing', 'rpa_processing', 'completed', 'failed', 'sent_to_siesa', 'siesa_error') NOT NULL DEFAULT 'pending'");
     }
 };

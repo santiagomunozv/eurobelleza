@@ -13,7 +13,7 @@ class ReprocessOrders extends Command
 {
     protected $signature = 'orders:reprocess
                             {--limit= : Cantidad de pedidos a procesar (si no se envía, procesa todos)}
-                            {--status=pending : Estado de los pedidos (pending, processing, rpa_processing, failed, completed, sent_to_siesa, siesa_error, all)}
+                            {--status=pending : Estado de los pedidos (pending, processing, rpa_processing, failed, completed, sent_to_siesa, siesa_error, payment_expired, all)}
                             {--validate : Validar configuración antes de despachar}';
 
     protected $description = 'Reprocesa pedidos existentes despachando jobs a la cola';
@@ -42,14 +42,18 @@ class ReprocessOrders extends Command
         $query = Order::query()->orderBy('id');
 
         if ($status === 'all') {
-            $query->whereNotIn('status', [OrderStatusEnum::COMPLETED->value, OrderStatusEnum::SENT_TO_SIESA->value]);
+            $query->whereNotIn('status', [
+                OrderStatusEnum::COMPLETED->value,
+                OrderStatusEnum::SENT_TO_SIESA->value,
+                OrderStatusEnum::PAYMENT_EXPIRED->value,
+            ]);
         } else {
             try {
                 $statusEnum = OrderStatusEnum::from($status);
                 $query->where('status', $statusEnum->value);
             } catch (\ValueError $e) {
                 $this->error("❌ Estado inválido: {$status}");
-                $this->error("   Estados válidos: pending, processing, rpa_processing, completed, failed, sent_to_siesa, siesa_error, all");
+                $this->error("   Estados válidos: pending, processing, rpa_processing, completed, failed, sent_to_siesa, siesa_error, payment_expired, all");
                 return self::FAILURE;
             }
         }
@@ -99,6 +103,7 @@ class ReprocessOrders extends Command
                     OrderStatusEnum::COMPLETED->value,
                     OrderStatusEnum::SENT_TO_SIESA->value,
                     OrderStatusEnum::RPA_PROCESSING->value,
+                    OrderStatusEnum::PAYMENT_EXPIRED->value,
                 ])) {
                     $skipped++;
                     $errors[] = "Pedido #{$order->shopify_order_number}: está {$order->status->value} y no se reprocesa";

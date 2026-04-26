@@ -28,6 +28,7 @@
                                 'failed' => 'Fallido',
                                 'sent_to_siesa' => 'Enviado a SIESA',
                                 'siesa_error' => 'Error SIESA',
+                                'payment_expired' => 'Vencido',
                             ];
                         @endphp
                         <p class="mt-1 text-sm font-semibold text-[var(--color-text)]">{{ $statusLabels[$order->status->value] ?? $order->status->value }}</p>

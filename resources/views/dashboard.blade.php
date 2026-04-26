@@ -63,6 +63,7 @@
                                         'failed' => 'bg-red-100 text-red-800',
                                         'sent_to_siesa' => 'bg-purple-100 text-purple-800',
                                         'siesa_error' => 'bg-orange-100 text-orange-800',
+                                        'payment_expired' => 'bg-slate-100 text-slate-800',
                                     ];
                                     $statusLabels = [
                                         'pending' => 'Pendiente',
@@ -72,6 +73,7 @@
                                         'failed' => 'Fallido',
                                         'sent_to_siesa' => 'Enviado a SIESA',
                                         'siesa_error' => 'Error SIESA',
+                                        'payment_expired' => 'Vencido',
                                     ];
                                 @endphp
                                 <tr>

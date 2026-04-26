@@ -57,6 +57,11 @@ class Order extends Model
         return $query->where('status', OrderStatusEnum::RPA_PROCESSING);
     }
 
+    public function scopePaymentExpired($query)
+    {
+        return $query->where('status', OrderStatusEnum::PAYMENT_EXPIRED);
+    }
+
     public function getCustomerNameAttribute(): string
     {
         $customer = $this->order_json['customer'] ?? [];

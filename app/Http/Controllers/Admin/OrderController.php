@@ -130,6 +130,18 @@ class OrderController extends Controller
                 ->with('error', "No se pudo actualizar el pedido desde Shopify: {$e->getMessage()}");
         }
 
+        $financialStatus = $order->order_json['financial_status'] ?? null;
+        if ($financialStatus !== 'paid') {
+            $orderLogService->logWarning($order, 'Reproceso manual bloqueado por pago no confirmado', [
+                'requested_by_user_id' => auth()->id(),
+                'financial_status' => $financialStatus,
+            ]);
+
+            return redirect()
+                ->route('admin.orders.index')
+                ->with('error', "El pedido #{$order->shopify_order_number} no está pagado en Shopify. Estado de pago: {$financialStatus}");
+        }
+
         $validation = $configValidator->validate($order->order_json);
         if (!$validation['valid']) {
             $orderLogService->logWarning($order, 'Reproceso manual bloqueado por configuración incompleta', [
@@ -201,6 +213,7 @@ class OrderController extends Controller
             'failed' => 'Fallido',
             'sent_to_siesa' => 'Enviado a SIESA',
             'siesa_error' => 'Error SIESA',
+            'payment_expired' => 'Vencido',
         ];
 
         $financialStatusLabels = [
@@ -210,6 +223,7 @@ class OrderController extends Controller
             'partially_paid' => 'Parcial',
             'refunded' => 'Reembolsado',
             'voided' => 'Anulado',
+            'expired' => 'Vencido',
             'partially_refunded' => 'Reemb. Parcial',
         ];
 

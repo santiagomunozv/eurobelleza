@@ -20,6 +20,11 @@ class Kernel extends ConsoleKernel
             ->dailyAt('02:00')
             ->timezone('America/Bogota');
 
+        // Marcado de pagos vencidos que ya no deben quedar como pendientes operativos
+        $schedule->command('orders:mark-expired-payments --days=3 --max-days=30')
+            ->dailyAt('02:30')
+            ->timezone('America/Bogota');
+
         // Refresco y reproceso de pedidos pending/failed recientes a las 3:00 AM
         $schedule->command('orders:refresh --non-completed --days=2 --reprocess')
             ->dailyAt('03:00')

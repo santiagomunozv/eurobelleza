@@ -39,6 +39,7 @@ Route::get('/dashboard', function () {
         OrderStatusEnum::FAILED->value => ['label' => 'Fallidos', 'color' => 'text-red-700', 'bg' => 'bg-red-50', 'border' => 'border-red-200'],
         OrderStatusEnum::SENT_TO_SIESA->value => ['label' => 'Enviados a SIESA', 'color' => 'text-purple-700', 'bg' => 'bg-purple-50', 'border' => 'border-purple-200'],
         OrderStatusEnum::SIESA_ERROR->value => ['label' => 'Error SIESA', 'color' => 'text-orange-700', 'bg' => 'bg-orange-50', 'border' => 'border-orange-200'],
+        OrderStatusEnum::PAYMENT_EXPIRED->value => ['label' => 'Vencidos', 'color' => 'text-slate-700', 'bg' => 'bg-slate-50', 'border' => 'border-slate-200'],
     ];
 
     $statsByStatus = collect(OrderStatusEnum::cases())

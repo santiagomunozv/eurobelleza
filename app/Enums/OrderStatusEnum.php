@@ -11,6 +11,7 @@ enum OrderStatusEnum: string
   case FAILED = 'failed';
   case SENT_TO_SIESA = 'sent_to_siesa';
   case SIESA_ERROR = 'siesa_error';
+  case PAYMENT_EXPIRED = 'payment_expired';
 
   public static function getValues(): array
   {
@@ -52,8 +53,13 @@ enum OrderStatusEnum: string
     return $this === self::SIESA_ERROR;
   }
 
+  public function isPaymentExpired(): bool
+  {
+    return $this === self::PAYMENT_EXPIRED;
+  }
+
   public function canRetry(): bool
   {
-    return in_array($this, [self::PENDING, self::FAILED, self::SIESA_ERROR]);
+    return in_array($this, [self::PENDING, self::FAILED, self::SIESA_ERROR, self::PAYMENT_EXPIRED]);
   }
 }
