@@ -24,6 +24,12 @@ class SiesaRunResultProcessor
         $filesWithWarning = $this->normalizeWarningEntries($payload['files_with_warning'] ?? []);
         $filesWithError = $this->normalizeErrorEntries($payload['files_with_error'] ?? []);
         $filesUnresolved = $this->normalizeUnresolvedEntries($payload['files_unresolved'] ?? []);
+        $this->prioritizeResultCategories(
+            $filesWithoutError,
+            $filesWithWarning,
+            $filesWithError,
+            $filesUnresolved
+        );
         $fatalError = $payload['fatal_error'] ?? null;
 
         $processed = 0;
@@ -77,7 +83,11 @@ class SiesaRunResultProcessor
                 continue;
             }
 
-            $this->orderRepository->updateStatus($order, OrderStatusEnum::COMPLETED);
+            $warningMessage = empty($warningEntry['warnings'])
+                ? 'Siesa completó el pedido con advertencias sin detalle.'
+                : implode(' | ', $warningEntry['warnings']);
+
+            $this->orderRepository->updateStatus($order, OrderStatusEnum::COMPLETED, $warningMessage);
             $this->orderLogService->logWarning($order, 'rpa_run_completed_with_warning', [
                 'run_id' => $runId,
                 'result_path' => $resultPath,
@@ -162,6 +172,7 @@ class SiesaRunResultProcessor
         return collect($files)
             ->map(fn($file) => is_string($file) ? trim($file) : '')
             ->filter()
+            ->unique(fn($file) => strtoupper($file))
             ->values()
             ->all();
     }
@@ -195,8 +206,7 @@ class SiesaRunResultProcessor
                 ];
             })
             ->filter(fn($entry) => !empty($entry['file_name']))
-            ->values()
-            ->all();
+            ->pipe(fn($entries) => $this->mergeEntriesByFileName($entries->all(), 'errors'));
     }
 
     private function normalizeWarningEntries(array $entries): array
@@ -228,8 +238,7 @@ class SiesaRunResultProcessor
                 ];
             })
             ->filter(fn($entry) => !empty($entry['file_name']))
-            ->values()
-            ->all();
+            ->pipe(fn($entries) => $this->mergeEntriesByFileName($entries->all(), 'warnings'));
     }
 
     private function normalizeUnresolvedEntries(array $entries): array
@@ -257,7 +266,76 @@ class SiesaRunResultProcessor
                 ];
             })
             ->filter(fn($entry) => !empty($entry['file_name']))
+            ->pipe(fn($entries) => $this->mergeEntriesByFileName($entries->all()));
+    }
+
+    private function prioritizeResultCategories(
+        array &$filesWithoutError,
+        array &$filesWithWarning,
+        array &$filesWithError,
+        array &$filesUnresolved
+    ): void {
+        $errorFiles = $this->fileNameSet(array_column($filesWithError, 'file_name'));
+        $unresolvedFiles = $this->fileNameSet(array_column($filesUnresolved, 'file_name'));
+        $warningFiles = $this->fileNameSet(array_column($filesWithWarning, 'file_name'));
+
+        $filesUnresolved = collect($filesUnresolved)
+            ->reject(fn($entry) => isset($errorFiles[strtoupper($entry['file_name'])]))
             ->values()
+            ->all();
+
+        $filesWithWarning = collect($filesWithWarning)
+            ->reject(fn($entry) => isset($errorFiles[strtoupper($entry['file_name'])]))
+            ->reject(fn($entry) => isset($unresolvedFiles[strtoupper($entry['file_name'])]))
+            ->values()
+            ->all();
+
+        $blockedFiles = $errorFiles + $unresolvedFiles + $warningFiles;
+        $filesWithoutError = collect($filesWithoutError)
+            ->reject(fn($fileName) => isset($blockedFiles[strtoupper($fileName)]))
+            ->values()
+            ->all();
+    }
+
+    private function mergeEntriesByFileName(array $entries, ?string $detailKey = null): array
+    {
+        $merged = [];
+
+        foreach ($entries as $entry) {
+            $fileName = $entry['file_name'];
+            $key = strtoupper($fileName);
+
+            if (!isset($merged[$key])) {
+                $merged[$key] = $entry;
+
+                if ($detailKey !== null) {
+                    $merged[$key][$detailKey] = array_values(array_unique($entry[$detailKey] ?? []));
+                }
+
+                continue;
+            }
+
+            $merged[$key]['s3_key'] = $merged[$key]['s3_key'] ?: ($entry['s3_key'] ?? null);
+            $merged[$key]['p99_key'] = $merged[$key]['p99_key'] ?: ($entry['p99_key'] ?? null);
+            $merged[$key]['reason'] = $merged[$key]['reason'] ?? ($entry['reason'] ?? null);
+
+            if ($detailKey !== null) {
+                $merged[$key][$detailKey] = array_values(array_unique(array_merge(
+                    $merged[$key][$detailKey] ?? [],
+                    $entry[$detailKey] ?? []
+                )));
+            }
+        }
+
+        return array_values($merged);
+    }
+
+    private function fileNameSet(array $fileNames): array
+    {
+        return collect($fileNames)
+            ->map(fn($fileName) => strtoupper((string) $fileName))
+            ->filter()
+            ->mapWithKeys(fn($fileName) => [$fileName => true])
             ->all();
     }
 

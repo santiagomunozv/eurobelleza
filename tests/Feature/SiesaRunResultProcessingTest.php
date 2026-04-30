@@ -102,6 +102,7 @@ class SiesaRunResultProcessingTest extends TestCase
         $order->refresh();
 
         $this->assertSame(OrderStatusEnum::COMPLETED, $order->status);
+        $this->assertSame('[000023] ITEM LIQUIDADO CON OTRA LISTA PRECIO', $order->error_message);
         $this->assertNotNull($order->processed_at);
         $this->assertTrue($order->logs()->where('message', 'rpa_run_completed_with_warning')->exists());
         Storage::disk('siesa_resultados')->assertMissing('run_20260424_1822.json');
@@ -141,6 +142,62 @@ class SiesaRunResultProcessingTest extends TestCase
         $this->assertTrue($order->logs()->where('message', 'rpa_run_unresolved_result')->exists());
         Storage::disk('siesa_resultados')->assertMissing('run_20260424_1826.json');
         Storage::disk('siesa_pedidos')->assertMissing('00065305.PE0');
+    }
+
+    public function test_it_deduplicates_rpa_result_files_and_applies_error_priority(): void
+    {
+        Storage::fake('siesa_pedidos');
+        Storage::fake('siesa_resultados');
+        Storage::fake('siesa_errores');
+
+        $order = $this->createOrder('65753', OrderStatusEnum::SENT_TO_SIESA);
+        Storage::disk('siesa_pedidos')->put('00065753.PE0', 'contenido');
+
+        Storage::disk('siesa_resultados')->put('run_20260430_060003.json', json_encode([
+            'run_id' => '20260430_060003',
+            'files_attempted' => ['00065753.PE0', '00065753.PE0'],
+            'files_without_error' => ['00065753.PE0'],
+            'files_with_warning' => [
+                [
+                    'file' => '00065753.PE0',
+                    'p99_key' => 'errores/20260430_00065753_warning.P99',
+                    'warnings' => ['[001614] ITEM LIQUIDADO CON OTRA LISTA PRECIO'],
+                ],
+            ],
+            'files_with_error' => [
+                [
+                    'file' => '00065753.PE0',
+                    's3_key' => 'pedidos/00065753.PE0',
+                    'p99_key' => 'errores/20260430_00065753_error.P99',
+                    'errors' => ['[222222222222] CLIENTE YA TIENE ESTE PEDIDO'],
+                ],
+                [
+                    'file' => '00065753.PE0',
+                    'errors' => ['[000000] ITEM NO EXISTE'],
+                ],
+            ],
+            'files_unresolved' => [
+                [
+                    'file' => '00065753.PE0',
+                    'reason' => 'P99 no parseable',
+                ],
+            ],
+            'fatal_error' => null,
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+
+        $this->artisan('siesa:check-errors')->assertExitCode(0);
+
+        $order->refresh();
+
+        $this->assertSame(OrderStatusEnum::SIESA_ERROR, $order->status);
+        $this->assertSame('[222222222222] CLIENTE YA TIENE ESTE PEDIDO | [000000] ITEM NO EXISTE', $order->error_message);
+        $this->assertSame(1, $order->logs()->where('message', 'rpa_run_file_attempted')->count());
+        $this->assertSame(1, $order->logs()->where('message', 'rpa_run_completed_with_error')->count());
+        $this->assertSame(0, $order->logs()->where('message', 'rpa_run_completed_without_error')->count());
+        $this->assertSame(0, $order->logs()->where('message', 'rpa_run_completed_with_warning')->count());
+        $this->assertSame(0, $order->logs()->where('message', 'rpa_run_unresolved_result')->count());
+        Storage::disk('siesa_resultados')->assertMissing('run_20260430_060003.json');
+        Storage::disk('siesa_pedidos')->assertMissing('00065753.PE0');
     }
 
     private function createOrder(string $orderNumber, OrderStatusEnum $status): Order
