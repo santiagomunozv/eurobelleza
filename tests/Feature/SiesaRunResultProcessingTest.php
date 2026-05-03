@@ -200,6 +200,27 @@ class SiesaRunResultProcessingTest extends TestCase
         Storage::disk('siesa_pedidos')->assertMissing('00065753.PE0');
     }
 
+    public function test_it_deletes_attempted_source_files_even_when_order_is_missing(): void
+    {
+        Storage::fake('siesa_pedidos');
+        Storage::fake('siesa_resultados');
+        Storage::fake('siesa_errores');
+
+        Storage::disk('siesa_pedidos')->put('00099999.PE0', 'contenido');
+        Storage::disk('siesa_resultados')->put('run_20260503_060003.json', json_encode([
+            'run_id' => '20260503_060003',
+            'files_attempted' => ['00099999.PE0'],
+            'files_without_error' => [],
+            'files_with_error' => [],
+            'fatal_error' => null,
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+
+        $this->artisan('siesa:check-errors')->assertExitCode(0);
+
+        Storage::disk('siesa_resultados')->assertMissing('run_20260503_060003.json');
+        Storage::disk('siesa_pedidos')->assertMissing('00099999.PE0');
+    }
+
     private function createOrder(string $orderNumber, OrderStatusEnum $status): Order
     {
         return Order::create([

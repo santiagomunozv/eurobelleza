@@ -30,6 +30,13 @@ class SiesaRunResultProcessor
             $filesWithError,
             $filesUnresolved
         );
+        $sourceFilesToDelete = $this->buildSourceFilesToDelete(
+            $filesAttempted,
+            $filesWithoutError,
+            $filesWithWarning,
+            $filesWithError,
+            $filesUnresolved
+        );
         $fatalError = $payload['fatal_error'] ?? null;
 
         $processed = 0;
@@ -70,7 +77,6 @@ class SiesaRunResultProcessor
                 'result_path' => $resultPath,
                 'file_name' => $fileName,
             ]);
-            $this->deleteSourceOrderFile($fileName, $runId);
             $completed++;
         }
 
@@ -95,7 +101,6 @@ class SiesaRunResultProcessor
                 'p99_key' => $warningEntry['p99_key'],
                 'warnings' => $warningEntry['warnings'],
             ]);
-            $this->deleteSourceOrderFile($fileName, $runId, $warningEntry['s3_key']);
             $completed++;
             $warnings++;
         }
@@ -122,7 +127,6 @@ class SiesaRunResultProcessor
                 'p99_key' => $errorEntry['p99_key'],
                 'errors' => $errorLines,
             ]);
-            $this->deleteSourceOrderFile($fileName, $runId, $errorEntry['s3_key']);
             $failed++;
         }
 
@@ -143,9 +147,10 @@ class SiesaRunResultProcessor
                 'p99_key' => $unresolvedEntry['p99_key'],
                 'reason' => $unresolvedEntry['reason'],
             ]);
-            $this->deleteSourceOrderFile($fileName, $runId, $unresolvedEntry['s3_key']);
             $unresolved++;
         }
+
+        $this->deleteSourceOrderFiles($sourceFilesToDelete, $runId);
 
         if ($fatalError) {
             Log::warning('Corrida RPA finalizada con fatal_error', [
@@ -339,6 +344,40 @@ class SiesaRunResultProcessor
             ->all();
     }
 
+    private function buildSourceFilesToDelete(
+        array $filesAttempted,
+        array $filesWithoutError,
+        array $filesWithWarning,
+        array $filesWithError,
+        array $filesUnresolved
+    ): array {
+        $files = [];
+
+        foreach (array_merge($filesAttempted, $filesWithoutError) as $fileName) {
+            $this->addSourceFileToDelete($files, $fileName);
+        }
+
+        foreach (array_merge($filesWithWarning, $filesWithError, $filesUnresolved) as $entry) {
+            $this->addSourceFileToDelete($files, $entry['file_name'], $entry['s3_key'] ?? null);
+        }
+
+        return array_values($files);
+    }
+
+    private function addSourceFileToDelete(array &$files, string $fileName, ?string $s3Key = null): void
+    {
+        $path = $this->normalizeSiesaPedidoPath($s3Key ?: $fileName);
+
+        if ($path === '') {
+            return;
+        }
+
+        $files[strtoupper($path)] = [
+            'file_name' => $fileName,
+            's3_key' => $s3Key,
+        ];
+    }
+
     private function resolveOrderFromFileName(string $fileName): ?Order
     {
         $baseName = pathinfo($fileName, PATHINFO_FILENAME);
@@ -346,6 +385,13 @@ class SiesaRunResultProcessor
         $normalizedOrderNumber = $normalizedOrderNumber === '' ? '0' : $normalizedOrderNumber;
 
         return $this->orderRepository->findByShopifyOrderNumber($normalizedOrderNumber);
+    }
+
+    private function deleteSourceOrderFiles(array $files, string $runId): void
+    {
+        foreach ($files as $file) {
+            $this->deleteSourceOrderFile($file['file_name'], $runId, $file['s3_key']);
+        }
     }
 
     private function deleteSourceOrderFile(string $fileName, string $runId, ?string $s3Key = null): void
