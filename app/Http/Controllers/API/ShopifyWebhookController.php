@@ -78,15 +78,19 @@ class ShopifyWebhookController extends Controller
                 if ($validation['valid']) {
                     ProcessShopifyOrder::dispatch($order);
                 } else {
-                    $orderRepository->updateStatus(
-                        $order,
-                        OrderStatusEnum::FAILED,
-                        implode(' | ', $validation['errors'])
-                    );
+                    if (!$this->shouldKeepPending($validation['errors'])) {
+                        $orderRepository->updateStatus(
+                            $order,
+                            OrderStatusEnum::FAILED,
+                            implode(' | ', $validation['errors'])
+                        );
+                    }
+
                     $orderLogService->logError($order, 'configuration_validation_failed', [
                         'errors' => $validation['errors'],
                         'details' => $validation['details'],
                         'financial_status' => $financialStatus,
+                        'kept_pending' => $this->shouldKeepPending($validation['errors']),
                     ]);
                 }
             }
@@ -107,5 +111,16 @@ class ShopifyWebhookController extends Controller
                 'error' => 'Internal server error'
             ], 500);
         }
+    }
+
+    private function shouldKeepPending(array $errors): bool
+    {
+        foreach ($errors as $error) {
+            if (str_contains($error, 'no tiene location_id en fulfillments')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

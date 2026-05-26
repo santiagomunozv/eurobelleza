@@ -148,14 +148,18 @@ class ShopifyOrderSyncService
                         ProcessShopifyOrder::dispatch($order);
                         $processed++;
                     } else {
-                        $this->orderRepository->updateStatus(
-                            $order,
-                            OrderStatusEnum::FAILED,
-                            implode(' | ', $validation['errors'])
-                        );
+                        if (!$this->shouldKeepPending($validation['errors'])) {
+                            $this->orderRepository->updateStatus(
+                                $order,
+                                OrderStatusEnum::FAILED,
+                                implode(' | ', $validation['errors'])
+                            );
+                        }
+
                         $this->orderLogService->logError($order, 'configuration_validation_failed', [
                             'errors' => $validation['errors'],
                             'details' => $validation['details'],
+                            'kept_pending' => $this->shouldKeepPending($validation['errors']),
                         ]);
                         $skipped++;
                     }
@@ -193,5 +197,16 @@ class ShopifyOrderSyncService
             'from' => $yesterday->copy()->startOfDay(),
             'to' => $yesterday->copy()->endOfDay(),
         ];
+    }
+
+    private function shouldKeepPending(array $errors): bool
+    {
+        foreach ($errors as $error) {
+            if (str_contains($error, 'no tiene location_id en fulfillments')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

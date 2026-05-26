@@ -72,12 +72,15 @@ class DispatchPendingOrders extends Command
 
                 if (!$validation['valid']) {
                     $errorMessage = implode(' | ', $validation['errors']);
-                    $this->orderRepository->updateStatus($order, OrderStatusEnum::FAILED, $errorMessage);
+                    if (!$this->shouldKeepPending($validation['errors'])) {
+                        $this->orderRepository->updateStatus($order, OrderStatusEnum::FAILED, $errorMessage);
+                    }
 
                     $this->orderLogService->logWarning($order, 'dispatch_pending_skipped_invalid_config', [
                         'context' => 'orders_dispatch_pending_command',
                         'errors' => $validation['errors'],
                         'details' => $validation['details'],
+                        'kept_pending' => $this->shouldKeepPending($validation['errors']),
                     ]);
 
                     $skipped++;
@@ -111,5 +114,16 @@ class DispatchPendingOrders extends Command
         }
 
         return self::SUCCESS;
+    }
+
+    private function shouldKeepPending(array $errors): bool
+    {
+        foreach ($errors as $error) {
+            if (str_contains($error, 'no tiene location_id en fulfillments')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
