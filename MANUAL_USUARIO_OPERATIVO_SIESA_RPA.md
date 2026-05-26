@@ -42,13 +42,25 @@ El bot:
 
 ### Paso 5. El sistema registra el resultado
 
-Si Siesa acepta el pedido, el pedido queda como:
+Si Siesa acepta el pedido y consume el archivo, el pedido queda como:
 
 - `Completado`
+
+Si Siesa acepta el pedido pero genera advertencias, también queda como:
+
+- `Completado`
+
+En ese caso el mensaje de advertencia queda visible en el pedido.
 
 Si Siesa rechaza el pedido, queda como:
 
 - `Error Siesa`
+
+Si el bot no puede confirmar que Siesa consumió el archivo, el pedido puede quedar como:
+
+- `Procesando en RPA`
+
+Ese caso requiere revisión.
 
 ---
 
@@ -90,7 +102,9 @@ El bot ya tomó ese pedido en una corrida.
 
 ### Completado
 
-Siesa lo procesó sin error.
+Siesa consumió el archivo del pedido.
+
+Puede tener advertencias informativas. Si las tiene, aparecerán en el mensaje del pedido.
 
 ### Fallido
 
@@ -99,6 +113,10 @@ El sistema no pudo preparar el archivo correctamente antes de enviarlo.
 ### Error Siesa
 
 Siesa rechazó el pedido y devolvió un error.
+
+### Vencido
+
+El pedido no se enviará a Siesa porque Shopify sigue indicando que el pago está pendiente, vencido o no confirmado después del periodo de revisión.
 
 ---
 
@@ -118,6 +136,7 @@ Revisar:
 
 - que la corrida de la tarde haya procesado pedidos
 - que no haya acumulación anormal en `Enviado a Siesa`
+- que no haya acumulación anormal en `Procesando en RPA`
 
 ---
 
@@ -136,9 +155,47 @@ Si un pedido queda en `Error Siesa`:
 
 4. volver a reprocesarlo cuando ya esté corregido
 
+Si un pedido queda `Completado` con mensaje de advertencia:
+
+1. revisar el mensaje del pedido
+2. validar si la advertencia requiere acción interna
+3. no reprocesar automáticamente si el pedido ya existe correctamente en Siesa
+
+Ejemplo común:
+
+```text
+ITEM LIQUIDADO CON OTRA LISTA PRECIO
+```
+
+Ese tipo de advertencia no necesariamente bloquea el pedido. El criterio principal es que Siesa haya consumido el archivo.
+
 ---
 
-## 7. Qué hacer si parece que no se procesó nada
+## 7. Qué hacer si un pedido queda en Procesando en RPA
+
+`Procesando en RPA` puede significar que el bot tomó el archivo, pero no pudo confirmar que Siesa lo importó correctamente.
+
+Casos comunes:
+
+- el archivo siguió en la carpeta `trm`
+- Siesa no generó un `.P99`
+- Siesa generó un `.P99` sin detalle reconocible
+- Siesa generó solo advertencias, pero no consumió el archivo
+- la pantalla de Siesa quedó en un punto inesperado
+
+Qué hacer:
+
+1. revisar el log del pedido en el sistema web
+2. revisar si hay mensaje de `rpa_run_unresolved_result`
+3. revisar el log de la corrida en el equipo Windows
+4. confirmar manualmente en Siesa si el pedido existe
+5. si el pedido no existe y la causa ya fue corregida, reprocesarlo manualmente desde la pantalla
+
+No asumir que `Procesando en RPA` significa completado.
+
+---
+
+## 8. Qué hacer si parece que no se procesó nada
 
 Si ves pedidos en `Enviado a Siesa` y no avanzan, revisar:
 
@@ -152,7 +209,7 @@ Si hace falta, se puede ejecutar el bot manualmente.
 
 ---
 
-## 8. Cómo ejecutar el bot manualmente
+## 9. Cómo ejecutar el bot manualmente
 
 Solo para soporte o prueba controlada.
 
@@ -170,17 +227,18 @@ Eso lanzará una corrida completa.
 
 ---
 
-## 9. Qué NO debe hacer el usuario
+## 10. Qué NO debe hacer el usuario
 
 - no borrar manualmente `state.json`
 - no mover ni renombrar carpetas del bot
 - no cambiar rutas de Siesa sin avisar al equipo técnico
 - no modificar la tarea programada sin revisar la configuración
 - no cerrar la sesión del usuario si se espera que el bot corra automáticamente
+- no borrar manualmente archivos de S3 si no se está haciendo una depuración técnica controlada
 
 ---
 
-## 10. Dónde mirar si algo falla
+## 11. Dónde mirar si algo falla
 
 ### En el sistema web
 
@@ -208,9 +266,21 @@ Carpetas importantes:
 - `archive`
 - `logs`
 
+### En Siesa / unidad U:
+
+Carpetas importantes:
+
+- `trm`: carpeta donde Siesa recibe los `.PE0`
+- `prt`: carpeta donde Siesa genera o actualiza los `.P99`
+
+Regla operativa importante:
+
+- si Siesa consume correctamente un `.PE0`, el archivo desaparece de `trm`
+- si Siesa no lo consume, el archivo puede quedarse en `trm` y puede generar o modificar un `.P99`
+
 ---
 
-## 11. Cuándo contactar soporte técnico
+## 12. Cuándo contactar soporte técnico
 
 Contactar soporte cuando ocurra cualquiera de estos casos:
 
@@ -218,19 +288,23 @@ Contactar soporte cuando ocurra cualquiera de estos casos:
 - la tarea programada deja de correr
 - aparecen muchos pedidos en `Error Siesa`
 - los pedidos se quedan mucho tiempo en `Enviado a Siesa`
+- los pedidos se quedan mucho tiempo en `Procesando en RPA`
 - el PC cambia de usuario, contraseña, escritorio o ruta de instalación
 - cambian rutas del disco `U:`
+- hay muchos pedidos `Completado` con advertencias no esperadas
 
 ---
 
-## 12. Resumen operativo simple
+## 13. Resumen operativo simple
 
 1. Shopify envía pedidos
 2. El sistema web los deja listos
 3. El bot corre a horas definidas
 4. El bot carga pedidos en Siesa
-5. El sistema web marca cada pedido como:
+5. El bot valida si Siesa consumió el archivo desde `trm`
+6. El sistema web marca cada pedido como:
 - `Completado`
 - o `Error Siesa`
+- o `Procesando en RPA` si no pudo confirmar el resultado
 
-En condiciones normales, el usuario solo revisa resultados y atiende excepciones.
+En condiciones normales, el usuario revisa resultados, atiende errores y valida manualmente los casos que queden en `Procesando en RPA`.

@@ -15,9 +15,14 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule)
     {
-        // Sincronización diaria de pedidos de Shopify a las 2:00 AM
-        $schedule->command('shopify:sync-orders')
+        // Recupera pedidos que no llegaron por webhook
+        $schedule->command('shopify:sync-missing-orders')
             ->dailyAt('02:00')
+            ->timezone('America/Bogota');
+
+        // Actualiza datos frescos de Shopify sin despachar reprocesos
+        $schedule->command('orders:refresh-shopify-data --non-completed --days=5')
+            ->dailyAt('02:20')
             ->timezone('America/Bogota');
 
         // Marcado de pagos vencidos que ya no deben quedar como pendientes operativos
@@ -25,13 +30,13 @@ class Kernel extends ConsoleKernel
             ->dailyAt('02:30')
             ->timezone('America/Bogota');
 
-        // Refresco y reproceso de pedidos pending/failed recientes a las 3:00 AM
-        $schedule->command('orders:refresh --non-completed --days=2 --reprocess')
+        // Despacha a cola los pedidos que sí se van a procesar
+        $schedule->command('orders:dispatch-pending --validate')
             ->dailyAt('03:00')
             ->timezone('America/Bogota');
 
         // Revisión de resultados y errores reportados por el RPA
-        $schedule->command('siesa:check-errors')
+        $schedule->command('siesa:process-rpa-results')
             ->everyThirtyMinutes()
             ->timezone('America/Bogota');
     }

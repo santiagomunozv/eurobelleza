@@ -9,8 +9,9 @@ Este documento describe la solución completa de integración entre Shopify y Si
 3. Publicación de archivos en Amazon S3
 4. Consumo de esos archivos por el bot Windows `eurobelleza_rpa`
 5. Carga de pedidos en Siesa 8.5 mediante automatización de escritorio
-6. Devolución de resultados y errores a S3
-7. Cierre de estados en Laravel
+6. Confirmación de consumo del `.PE0` en la carpeta `trm`
+7. Devolución de resultados y errores a S3
+8. Cierre de estados y limpieza de S3 desde Laravel
 
 Este manual está orientado a soporte técnico, despliegue, mantenimiento y auditoría del proceso.
 
@@ -46,6 +47,7 @@ Responsabilidades principales:
 - abrir Siesa 8.5
 - iniciar sesión y navegar por teclado
 - ejecutar la importación
+- validar si Siesa consumió el `.PE0` desde `trm`
 - detectar archivos `.P99`
 - subir errores a `errores/`
 - generar un JSON de corrida y subirlo a `resultados/`
@@ -75,7 +77,8 @@ Prefijos utilizados:
 Sistema destino que:
 
 - importa pedidos desde archivos `.PE0`
-- genera archivos `.P99` cuando encuentra errores de validación o duplicidad
+- elimina de `trm` los `.PE0` que consume correctamente
+- genera o actualiza archivos `.P99` cuando encuentra errores, advertencias o inconsistencias
 
 ---
 
@@ -90,10 +93,12 @@ Sistema destino que:
 5. En los horarios definidos, Windows ejecuta el bot RPA.
 6. El bot descarga los `.PE0` nuevos.
 7. El bot abre Siesa e importa cada archivo.
-8. Si Siesa genera `.P99`, el bot lo sube a `errores/`.
-9. El bot sube un JSON de corrida a `resultados/`.
-10. Laravel procesa `resultados/` y `errores/`.
-11. Laravel deja cada pedido en `completed` o `siesa_error`.
+8. El bot valida si el `.PE0` desapareció de `trm`.
+9. Si Siesa genera `.P99`, el bot lo sube a `errores/`.
+10. El bot sube un JSON de corrida a `resultados/`.
+11. Laravel procesa `resultados/` y `errores/`.
+12. Laravel deja cada pedido en `completed`, `siesa_error` o `rpa_processing`.
+13. Laravel elimina de S3 los `.PE0` de `pedidos/` que el RPA reportó como leídos o intentados.
 
 ### 3.2 Flujo por carpetas S3
 
@@ -101,8 +106,8 @@ Sistema destino que:
 
 - Laravel publica aquí los `.PE0`
 - el bot Windows los descarga
-- actualmente **no se eliminan automáticamente de S3**
-- el bot evita reprocesarlos usando `state.json`
+- Laravel los elimina cuando consume el JSON de resultado del RPA
+- el bot mantiene `state.json` como defensa adicional para no reprocesar antes de que Laravel limpie S3
 
 #### `errores/`
 
@@ -129,6 +134,7 @@ Estados implementados en Laravel:
 - `completed`
 - `failed`
 - `siesa_error`
+- `payment_expired`
 
 ### Significado de cada estado
 
@@ -154,7 +160,9 @@ Laravel ya recibió evidencia de que el archivo fue tomado en una corrida RPA.
 
 #### `completed`
 
-El pedido fue reportado por el RPA como procesado sin error.
+El pedido fue reportado por el RPA como consumido por Siesa desde `trm`.
+
+Si Siesa consumió el `.PE0` pero generó advertencias, el pedido también queda `completed`, y las advertencias se guardan en `error_message` para trazabilidad.
 
 #### `failed`
 
@@ -163,6 +171,10 @@ Falló la generación o envío del archivo desde Laravel antes de pasar al RPA.
 #### `siesa_error`
 
 Siesa devolvió error para ese pedido.
+
+#### `payment_expired`
+
+El pedido no fue enviado a Siesa porque Shopify reporta pago vencido o no confirmado después del periodo de revisión configurado.
 
 ---
 
@@ -238,9 +250,12 @@ Responsabilidades:
 
 - leer `resultados/`
 - interpretar archivos intentados, exitosos y con error
+- deduplicar archivos reportados por el RPA
+- resolver conflictos por archivo con prioridad `error > unresolved > warning > without_error`
 - actualizar estados de pedidos
 - consumir `.P99` legados si existen
-- eliminar de S3 los JSON y `.P99` ya procesados
+- guardar advertencias de Siesa en `error_message` cuando el pedido queda `completed` con warning
+- eliminar de S3 los `.PE0`, JSON y `.P99` ya procesados
 
 ---
 
@@ -257,10 +272,16 @@ Archivo:
 - horario: `02:00 AM`
 - función: recuperar pedidos faltantes desde Shopify
 
-#### `orders:refresh --non-completed --days=30 --reprocess`
+#### `orders:mark-expired-payments --days=3 --max-days=30`
+
+- horario: `02:30 AM`
+- función: refrescar pedidos pendientes antiguos y marcarlos como `payment_expired` cuando Shopify sigue reportando pago no confirmado
+
+#### `orders:refresh --non-completed --days=2 --reprocess`
 
 - horario: `03:00 AM`
-- función: refrescar pedidos no completados y reprocesarlos si ahora tienen configuración válida
+- función: refrescar pedidos no completados recientes y reprocesar solo `pending` o `failed`
+- exclusión importante: no reprocesa automáticamente pedidos en `siesa_error`
 
 #### `siesa:check-errors`
 
@@ -321,6 +342,7 @@ Variables esperadas:
 Permisos requeridos para Laravel:
 
 - `PutObject` sobre `pedidos/*`
+- `GetObject`, `DeleteObject` sobre `pedidos/*`
 - `GetObject`, `DeleteObject` sobre `errores/*`
 - `GetObject`, `DeleteObject` sobre `resultados/*`
 - `ListBucket` sobre el bucket
@@ -357,7 +379,6 @@ Variables más importantes:
 - `S3_PEDIDOS_PREFIX`
 - `S3_ERRORES_PREFIX`
 - `S3_RESULTADOS_PREFIX`
-- `DELETE_SOURCE_OBJECTS`
 
 ### 9.3 Función del `BOT_WORKDIR`
 
@@ -371,11 +392,11 @@ Esta carpeta local contiene:
 
 ### 9.4 Importancia de `state.json`
 
-Actualmente `pedidos/` no se borra de S3. Por eso el bot usa `state.json` para recordar qué objetos ya fueron procesados.
+Laravel borra de S3 los archivos de `pedidos/` cuando consume los resultados del RPA. Aun así, el bot usa `state.json` como defensa local para recordar qué objetos ya fueron procesados antes de que Laravel alcance a limpiar S3.
 
 Riesgo operativo:
 
-- si se borra `state.json`, el bot volverá a considerar como nuevos los archivos que sigan en `pedidos/`
+- si se borra `state.json` y Laravel aún no ha limpiado `pedidos/`, el bot puede volver a considerar esos archivos como nuevos
 
 Recomendación:
 
@@ -402,13 +423,31 @@ Comportamiento:
 7. inicia sesión
 8. navega por teclado hasta el menú de importación
 9. procesa archivo por archivo
-10. detecta `.P99` nuevos
-11. sube errores a `errores/`
-12. registra resultado de corrida
-13. sube JSON a `resultados/`
-14. cierra Siesa
+10. valida si Siesa consumió el `.PE0` desde `trm`
+11. detecta `.P99` nuevos o modificados
+12. sube `.P99` a `errores/`
+13. clasifica el resultado con base en consumo de `trm` y contenido del `.P99`
+14. limpia el `.PE0` local de `trm` si Siesa no lo consumió
+15. registra resultado de corrida
+16. sube JSON a `resultados/`
+17. cierra Siesa
 
-### 9.7 Salida de una corrida
+### 9.7 Criterio de éxito del bot
+
+La señal principal de éxito es que Siesa consuma el archivo `.PE0` desde `trm`.
+
+Reglas actuales:
+
+- si el `.PE0` desaparece de `trm` y no hay `.P99`, el archivo se reporta en `files_without_error`
+- si el `.PE0` desaparece de `trm` y hay `.P99` solo con advertencias, se reporta en `files_with_warning`
+- si el `.PE0` desaparece de `trm` y hay `.P99` sin detalle reconocible, se reporta en `files_with_warning` con advertencia genérica
+- si el `.PE0` desaparece de `trm` pero el `.P99` contiene errores reales, se reporta en `files_unresolved` para revisión manual
+- si el `.PE0` no desaparece de `trm` y el `.P99` contiene errores reales, se reporta en `files_with_error`
+- si el `.PE0` no desaparece de `trm` y no hay error real, se reporta en `files_unresolved`
+
+El bot ya no marca éxito únicamente porque no haya detectado un `.P99`.
+
+### 9.8 Salida de una corrida
 
 Por cada corrida el bot sube un JSON como este:
 
@@ -420,9 +459,26 @@ Por cada corrida el bot sube un JSON como este:
   "machine_name": "PC-SIESA-01",
   "files_detected": ["00003663.PE0"],
   "files_attempted": ["00003663.PE0"],
+  "files_consumed_by_siesa": ["00003663.PE0"],
   "files_without_error": ["00003663.PE0"],
+  "files_with_warning": [],
   "files_with_error": [],
+  "files_unresolved": [],
   "fatal_error": null
+}
+```
+
+Ejemplo con advertencias:
+
+```json
+{
+  "file": "00065303.PE0",
+  "s3_key": "pedidos/00065303.PE0",
+  "p99_key": "errores/20260424_220609_00065303_UCVE104F.P99",
+  "warnings": [
+    "[001614] ITEM LIQUIDADO CON OTRA LISTA PRECIOKIT REGENERADOR INTENSO"
+  ],
+  "consumed_by_siesa": true
 }
 ```
 
@@ -467,6 +523,7 @@ El Programador de tareas debe abrirse como administrador para crear o editar cor
 Debe poder:
 
 - escribir `pedidos/`
+- leer y borrar `pedidos/`
 - leer y borrar `errores/`
 - leer y borrar `resultados/`
 - listar el bucket
@@ -481,8 +538,8 @@ Debe poder:
 
 Actualmente:
 
-- `DELETE_SOURCE_OBJECTS = False`
-- por lo tanto Windows **no necesita** borrar `pedidos/`
+- Windows **no borra** objetos de `pedidos/`
+- Laravel es responsable de limpiar `pedidos/` cuando consume `resultados/`
 
 ---
 
@@ -506,7 +563,8 @@ Actualmente:
 
 - consume `resultados/`
 - consume `errores/`
-- marca pedidos como `completed` o `siesa_error`
+- marca pedidos como `completed`, `siesa_error` o `rpa_processing`
+- elimina de S3 los `.PE0` de `pedidos/` reportados como leídos o intentados por el RPA
 
 ---
 
@@ -530,7 +588,13 @@ php artisan orders:reprocess --status=pending --limit=50 --validate
 php artisan orders:refresh --ids=123 --ids=124 --reprocess
 ```
 
-### 13.4 Revisar Supervisor
+### 13.4 Marcar pagos vencidos manualmente
+
+```bash
+php artisan orders:mark-expired-payments --days=3 --max-days=30
+```
+
+### 13.5 Revisar Supervisor
 
 ```bash
 sudo supervisorctl status
@@ -554,6 +618,7 @@ Revisar:
 
 - que `state.json` exista
 - que no haya sido eliminado o reemplazado
+- que Laravel esté ejecutando `siesa:check-errors` y limpiando `pedidos/` en S3
 
 ### 14.3 Laravel no cambia estados
 
@@ -563,7 +628,16 @@ Revisar:
 - que `resultados/` y `errores/` tengan permisos correctos
 - que el cron de `schedule:run` exista
 
-### 14.4 Los `.PE0` no se generan
+### 14.4 Pedidos quedan en `rpa_processing` con resultado no resuelto
+
+Revisar:
+
+- si el `.PE0` siguió en `trm`
+- si Siesa generó o modificó `.P99`
+- si el log del bot indica `Siesa no consumió el archivo ... sigue en trm`
+- si el `.P99` fue generado tarde o en una ruta distinta a `SIESA_P99_PATH`
+
+### 14.5 Los `.PE0` no se generan
 
 Revisar:
 
@@ -572,7 +646,7 @@ Revisar:
 - logs del pedido
 - configuración general, bodegas y métodos de pago
 
-### 14.5 La tarea de Windows no se deja guardar
+### 14.6 La tarea de Windows no se deja guardar
 
 Revisar:
 
@@ -590,6 +664,7 @@ Revisar:
 - validar S3 después de cualquier cambio de credenciales
 - probar manualmente el bot después de cualquier cambio en Siesa o en el escritorio del equipo
 - documentar cualquier cambio en los horarios de corrida
+- validar que Siesa consuma los `.PE0` de `trm` después de cambios en la pantalla o menú de importación
 
 ---
 
@@ -618,4 +693,4 @@ Revisar:
 
 ## 17. Estado actual del diseño
 
-La solución ya no marca pedidos como exitosos por “silencio” o timeout. El cierre de estados depende de evidencia real subida por el RPA en `resultados/`, lo cual vuelve el proceso más confiable y trazable.
+La solución ya no marca pedidos como exitosos por “silencio” o ausencia de `.P99`. El bot usa como confirmación principal que Siesa haya consumido el `.PE0` desde `trm`. Laravel deduplica los resultados por archivo, prioriza errores sobre advertencias, guarda las advertencias en `error_message` cuando el pedido queda completado y limpia `pedidos/` en S3 al consumir la corrida.

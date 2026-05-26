@@ -5,26 +5,22 @@ namespace App\Console\Commands;
 use App\Models\Order;
 use App\Enums\OrderStatusEnum;
 use App\Services\Shopify\ShopifyApiClient;
-use App\Services\OrderConfigurationValidator;
 use App\Services\OrderLogService;
-use App\Jobs\ProcessShopifyOrder;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
 class RefreshOrderData extends Command
 {
-    protected $signature = 'orders:refresh
+    protected $signature = 'orders:refresh-shopify-data
                             {--ids=* : IDs específicos de pedidos a actualizar}
                             {--pending-without-fulfillments : Actualizar todos los PENDING sin fulfillments}
                             {--non-completed : Actualizar todos los pedidos no completados}
-                            {--days=30 : Ventana de días para --non-completed}
-                            {--reprocess : Reprocesar automáticamente si ahora tiene configuración válida}';
+                            {--days=30 : Ventana de días para --non-completed}';
 
     protected $description = 'Reconsulta pedidos desde Shopify API y actualiza el order_json en la base de datos';
 
     public function __construct(
         private ShopifyApiClient $apiClient,
-        private OrderConfigurationValidator $configValidator,
         private OrderLogService $orderLogService
     ) {
         parent::__construct();
@@ -38,12 +34,11 @@ class RefreshOrderData extends Command
             return self::FAILURE;
         }
 
-        Log::info('Inicio de orders:refresh', [
+        Log::info('Inicio de orders:refresh-shopify-data', [
             'ids' => $this->option('ids'),
             'pending_without_fulfillments' => (bool) $this->option('pending-without-fulfillments'),
             'non_completed' => (bool) $this->option('non-completed'),
             'days' => $days,
-            'reprocess' => (bool) $this->option('reprocess'),
         ]);
 
         $this->info('🔄 Actualizando datos de pedidos desde Shopify API...');
@@ -61,7 +56,7 @@ class RefreshOrderData extends Command
 
         $updated = 0;
         $failed = 0;
-        $reprocessed = 0;
+        $reactivatedExpired = 0;
         $errors = [];
 
         $progressBar = $this->output->createProgressBar($orders->count());
@@ -90,36 +85,20 @@ class RefreshOrderData extends Command
                     'status_before' => $order->status->value,
                 ]);
 
-                // El reproceso automático solo debe reintentar pedidos pendientes o fallidos.
-                if ($this->option('reprocess') && in_array($order->status, [
-                    OrderStatusEnum::PENDING,
-                    OrderStatusEnum::FAILED,
-                ], true)) {
-                    // Validar si ahora tiene configuración completa
-                    $validation = $this->configValidator->validate($freshData);
+                $financialStatus = $freshData['financial_status'] ?? null;
+                if ($order->status === OrderStatusEnum::PAYMENT_EXPIRED && $financialStatus === 'paid') {
+                    $order->update([
+                        'status' => OrderStatusEnum::PENDING->value,
+                        'error_message' => null,
+                        'processed_at' => null,
+                        'attempts' => 0,
+                    ]);
 
-                    if ($validation['valid']) {
-                        if ($order->status !== OrderStatusEnum::PENDING) {
-                            $order->status = OrderStatusEnum::PENDING;
-                            $order->error_message = null;
-                            $order->processed_at = null;
-                            $order->attempts = 0;
-                            $order->save();
-                        }
-
-                        ProcessShopifyOrder::dispatch($order->fresh());
-                        $this->orderLogService->logInfo($order, 'refresh_order_data_reprocess_dispatched', [
-                            'context' => 'orders_refresh_command',
-                            'status_after' => OrderStatusEnum::PENDING->value,
-                        ]);
-                        $reprocessed++;
-                    } else {
-                        $this->orderLogService->logWarning($order, 'refresh_order_data_reprocess_skipped_invalid_config', [
-                            'context' => 'orders_refresh_command',
-                            'errors' => $validation['errors'],
-                            'details' => $validation['details'],
-                        ]);
-                    }
+                    $this->orderLogService->logInfo($order, 'refresh_order_data_payment_expired_reactivated', [
+                        'context' => 'orders_refresh_command',
+                        'financial_status' => $financialStatus,
+                    ]);
+                    $reactivatedExpired++;
                 }
             } catch (\Exception $e) {
                 $failed++;
@@ -142,7 +121,7 @@ class RefreshOrderData extends Command
             [
                 ['Pedidos encontrados', $orders->count()],
                 ['Pedidos actualizados', $updated],
-                ['Jobs reprocesados', $reprocessed],
+                ['Pagos vencidos reactivados', $reactivatedExpired],
                 ['Fallos', $failed],
             ]
         );
@@ -159,15 +138,15 @@ class RefreshOrderData extends Command
         $this->newLine();
         if ($updated > 0) {
             $this->info("✅ {$updated} pedidos actualizados exitosamente");
-            if ($reprocessed > 0) {
-                $this->info("✅ {$reprocessed} pedidos reprocesados (ejecuta queue:work)");
+            if ($reactivatedExpired > 0) {
+                $this->info("✅ {$reactivatedExpired} pedidos vencidos volvieron a PENDING por pago confirmado");
             }
         }
 
-        Log::info('Fin de orders:refresh', [
+        Log::info('Fin de orders:refresh-shopify-data', [
             'orders_found' => $orders->count(),
             'updated' => $updated,
-            'reprocessed' => $reprocessed,
+            'reactivated_expired' => $reactivatedExpired,
             'failed' => $failed,
             'errors_count' => count($errors),
         ]);
@@ -194,13 +173,6 @@ class RefreshOrderData extends Command
 
         if ($this->option('non-completed')) {
             $query = Order::where('created_at', '>=', $fromDate);
-
-            if ($this->option('reprocess')) {
-                return $query->whereIn('status', [
-                    OrderStatusEnum::PENDING->value,
-                    OrderStatusEnum::FAILED->value,
-                ])->get();
-            }
 
             return $query->whereNotIn('status', [
                 OrderStatusEnum::COMPLETED->value,

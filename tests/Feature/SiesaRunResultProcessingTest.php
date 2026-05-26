@@ -12,7 +12,7 @@ class SiesaRunResultProcessingTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_it_marks_orders_completed_from_rpa_result_file(): void
+    public function test_it_keeps_successful_rpa_results_awaiting_p97_confirmation(): void
     {
         Storage::fake('siesa_pedidos');
         Storage::fake('siesa_resultados');
@@ -29,12 +29,12 @@ class SiesaRunResultProcessingTest extends TestCase
             'fatal_error' => null,
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 
-        $this->artisan('siesa:check-errors')->assertExitCode(0);
+        $this->artisan('siesa:process-rpa-results')->assertExitCode(0);
 
         $order->refresh();
 
-        $this->assertSame(OrderStatusEnum::COMPLETED, $order->status);
-        $this->assertNotNull($order->processed_at);
+        $this->assertSame(OrderStatusEnum::RPA_PROCESSING, $order->status);
+        $this->assertNull($order->processed_at);
         Storage::disk('siesa_resultados')->assertMissing('run_20260406_0630.json');
         Storage::disk('siesa_pedidos')->assertMissing('00003663.PE0');
     }
@@ -62,7 +62,7 @@ class SiesaRunResultProcessingTest extends TestCase
             'fatal_error' => null,
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 
-        $this->artisan('siesa:check-errors')->assertExitCode(0);
+        $this->artisan('siesa:process-rpa-results')->assertExitCode(0);
 
         $order->refresh();
 
@@ -73,7 +73,7 @@ class SiesaRunResultProcessingTest extends TestCase
         Storage::disk('siesa_pedidos')->assertMissing('00003664.PE0');
     }
 
-    public function test_it_marks_orders_completed_with_warning_from_rpa_result_file(): void
+    public function test_it_keeps_warning_rpa_results_awaiting_p97_confirmation(): void
     {
         Storage::fake('siesa_pedidos');
         Storage::fake('siesa_resultados');
@@ -97,14 +97,14 @@ class SiesaRunResultProcessingTest extends TestCase
             'fatal_error' => null,
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 
-        $this->artisan('siesa:check-errors')->assertExitCode(0);
+        $this->artisan('siesa:process-rpa-results')->assertExitCode(0);
 
         $order->refresh();
 
-        $this->assertSame(OrderStatusEnum::COMPLETED, $order->status);
+        $this->assertSame(OrderStatusEnum::RPA_PROCESSING, $order->status);
         $this->assertSame('[000023] ITEM LIQUIDADO CON OTRA LISTA PRECIO', $order->error_message);
-        $this->assertNotNull($order->processed_at);
-        $this->assertTrue($order->logs()->where('message', 'rpa_run_completed_with_warning')->exists());
+        $this->assertNull($order->processed_at);
+        $this->assertTrue($order->logs()->where('message', 'rpa_run_awaiting_p97_with_warning')->exists());
         Storage::disk('siesa_resultados')->assertMissing('run_20260424_1822.json');
         Storage::disk('siesa_pedidos')->assertMissing('00065304.PE0');
     }
@@ -133,7 +133,7 @@ class SiesaRunResultProcessingTest extends TestCase
             'fatal_error' => null,
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 
-        $this->artisan('siesa:check-errors')->assertExitCode(0);
+        $this->artisan('siesa:process-rpa-results')->assertExitCode(0);
 
         $order->refresh();
 
@@ -185,7 +185,7 @@ class SiesaRunResultProcessingTest extends TestCase
             'fatal_error' => null,
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 
-        $this->artisan('siesa:check-errors')->assertExitCode(0);
+        $this->artisan('siesa:process-rpa-results')->assertExitCode(0);
 
         $order->refresh();
 
@@ -193,8 +193,8 @@ class SiesaRunResultProcessingTest extends TestCase
         $this->assertSame('[222222222222] CLIENTE YA TIENE ESTE PEDIDO | [000000] ITEM NO EXISTE', $order->error_message);
         $this->assertSame(1, $order->logs()->where('message', 'rpa_run_file_attempted')->count());
         $this->assertSame(1, $order->logs()->where('message', 'rpa_run_completed_with_error')->count());
-        $this->assertSame(0, $order->logs()->where('message', 'rpa_run_completed_without_error')->count());
-        $this->assertSame(0, $order->logs()->where('message', 'rpa_run_completed_with_warning')->count());
+        $this->assertSame(0, $order->logs()->where('message', 'rpa_run_awaiting_p97_without_error')->count());
+        $this->assertSame(0, $order->logs()->where('message', 'rpa_run_awaiting_p97_with_warning')->count());
         $this->assertSame(0, $order->logs()->where('message', 'rpa_run_unresolved_result')->count());
         Storage::disk('siesa_resultados')->assertMissing('run_20260430_060003.json');
         Storage::disk('siesa_pedidos')->assertMissing('00065753.PE0');
@@ -215,7 +215,7 @@ class SiesaRunResultProcessingTest extends TestCase
             'fatal_error' => null,
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 
-        $this->artisan('siesa:check-errors')->assertExitCode(0);
+        $this->artisan('siesa:process-rpa-results')->assertExitCode(0);
 
         Storage::disk('siesa_resultados')->assertMissing('run_20260503_060003.json');
         Storage::disk('siesa_pedidos')->assertMissing('00099999.PE0');

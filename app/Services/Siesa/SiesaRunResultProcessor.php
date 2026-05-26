@@ -40,7 +40,7 @@ class SiesaRunResultProcessor
         $fatalError = $payload['fatal_error'] ?? null;
 
         $processed = 0;
-        $completed = 0;
+        $awaitingConfirmation = 0;
         $failed = 0;
         $warnings = 0;
         $unresolved = 0;
@@ -71,13 +71,13 @@ class SiesaRunResultProcessor
                 continue;
             }
 
-            $this->orderRepository->updateStatus($order, OrderStatusEnum::COMPLETED);
-            $this->orderLogService->logSuccess($order, 'rpa_run_completed_without_error', [
+            $this->orderRepository->updateStatus($order, OrderStatusEnum::RPA_PROCESSING);
+            $this->orderLogService->logSuccess($order, 'rpa_run_awaiting_p97_without_error', [
                 'run_id' => $runId,
                 'result_path' => $resultPath,
                 'file_name' => $fileName,
             ]);
-            $completed++;
+            $awaitingConfirmation++;
         }
 
         foreach ($filesWithWarning as $warningEntry) {
@@ -93,15 +93,15 @@ class SiesaRunResultProcessor
                 ? 'Siesa completó el pedido con advertencias sin detalle.'
                 : implode(' | ', $warningEntry['warnings']);
 
-            $this->orderRepository->updateStatus($order, OrderStatusEnum::COMPLETED, $warningMessage);
-            $this->orderLogService->logWarning($order, 'rpa_run_completed_with_warning', [
+            $this->orderRepository->updateStatus($order, OrderStatusEnum::RPA_PROCESSING, $warningMessage);
+            $this->orderLogService->logWarning($order, 'rpa_run_awaiting_p97_with_warning', [
                 'run_id' => $runId,
                 'result_path' => $resultPath,
                 'file_name' => $fileName,
                 'p99_key' => $warningEntry['p99_key'],
                 'warnings' => $warningEntry['warnings'],
             ]);
-            $completed++;
+            $awaitingConfirmation++;
             $warnings++;
         }
 
@@ -163,7 +163,8 @@ class SiesaRunResultProcessor
         return [
             'run_id' => $runId,
             'processed' => $processed,
-            'completed' => $completed,
+            'completed' => 0,
+            'awaiting_confirmation' => $awaitingConfirmation,
             'failed' => $failed,
             'warnings' => $warnings,
             'unresolved' => $unresolved,

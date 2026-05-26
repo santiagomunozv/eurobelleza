@@ -83,6 +83,25 @@ return [
             'throw' => true,
         ],
 
+        'siesa_bucket' => [
+            'driver' => 's3',
+            'key' => env('SIESA_S3_KEY'),
+            'secret' => env('SIESA_S3_SECRET'),
+            'region' => env('SIESA_S3_REGION', 'us-east-2'),
+            'bucket' => env('SIESA_S3_BUCKET', 'eurobelleza-siesa'),
+            'throw' => true,
+        ],
+
+        'siesa_confirmaciones' => [
+            'driver' => 's3',
+            'key' => env('SIESA_S3_KEY'),
+            'secret' => env('SIESA_S3_SECRET'),
+            'region' => env('SIESA_S3_REGION', 'us-east-2'),
+            'bucket' => env('SIESA_S3_BUCKET', 'eurobelleza-siesa'),
+            'root' => 'confirmaciones',
+            'throw' => true,
+        ],
+
     ],
 
     /*

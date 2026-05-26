@@ -73,13 +73,16 @@ class ShopifyWebhookController extends Controller
             $financialStatus = $orderData['financial_status'] ?? null;
 
             if ($financialStatus === 'paid') {
-                // Validar configuración antes de despachar job
                 $validation = $configValidator->validate($orderData);
 
                 if ($validation['valid']) {
                     ProcessShopifyOrder::dispatch($order);
                 } else {
-                    // Configuración incompleta, registrar en logs y mantener en PENDING
+                    $orderRepository->updateStatus(
+                        $order,
+                        OrderStatusEnum::FAILED,
+                        implode(' | ', $validation['errors'])
+                    );
                     $orderLogService->logError($order, 'configuration_validation_failed', [
                         'errors' => $validation['errors'],
                         'details' => $validation['details'],

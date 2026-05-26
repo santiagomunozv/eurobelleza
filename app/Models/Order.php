@@ -18,12 +18,20 @@ class Order extends Model
         'error_message',
         'attempts',
         'processed_at',
+        'siesa_order_number',
+        'siesa_document_alt',
+        'siesa_order_date',
+        'siesa_erp_status',
+        'siesa_confirmed_at',
+        'siesa_confirmation_file',
     ];
 
     protected $casts = [
         'order_json' => 'array',
         'status' => OrderStatusEnum::class,
         'processed_at' => 'datetime',
+        'siesa_order_date' => 'date',
+        'siesa_confirmed_at' => 'datetime',
         'attempts' => 'integer',
     ];
 

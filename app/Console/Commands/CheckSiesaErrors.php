@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Storage;
 
 class CheckSiesaErrors extends Command
 {
-    protected $signature = 'siesa:check-errors';
+    protected $signature = 'siesa:process-rpa-results';
 
     protected $description = 'Procesa resultados de corridas RPA y archivos P99 de Siesa en S3';
 
@@ -81,7 +81,7 @@ class CheckSiesaErrors extends Command
                 $processedFiles++;
                 $failedOrders += $summary['failed'];
 
-                $note = "run_id={$summary['run_id']} completados={$summary['completed']} con_error={$summary['failed']}";
+                $note = "run_id={$summary['run_id']} pendientes_p97={$summary['awaiting_confirmation']} con_error={$summary['failed']}";
                 if (($summary['warnings'] ?? 0) > 0) {
                     $note .= " con_advertencia={$summary['warnings']}";
                 }
@@ -130,11 +130,17 @@ class CheckSiesaErrors extends Command
 
         foreach ($legacyP99Files as $path) {
             $contenido = Storage::disk('siesa_errores')->get($path);
-            $erroresPorPedido = $this->parsearErroresBlocking($contenido);
+            $resultadoP99 = $this->parsearP99Legado($contenido);
 
-            foreach ($erroresPorPedido as $numeroPedido => $lineasError) {
+            foreach ($resultadoP99['errors'] as $numeroPedido => $lineasError) {
                 if ($this->marcarPedidoConError($numeroPedido, $lineasError, $path)) {
                     $failedOrders++;
+                }
+            }
+
+            foreach ($resultadoP99['warnings'] as $numeroPedido => $lineasAdvertencia) {
+                if (!isset($resultadoP99['errors'][$numeroPedido])) {
+                    $this->marcarPedidoConAdvertencia($numeroPedido, $lineasAdvertencia, $path);
                 }
             }
 
@@ -150,22 +156,30 @@ class CheckSiesaErrors extends Command
         ];
     }
 
-    private function parsearErroresBlocking(string $contenido): array
+    private function parsearP99Legado(string $contenido): array
     {
-        $erroresPorPedido = [];
+        $resultado = [
+            'errors' => [],
+            'warnings' => [],
+        ];
 
         foreach (explode("\n", $contenido) as $linea) {
-            if (!preg_match('/^ (\d{10})\s+(.+)$/', $linea, $matches)) {
+            if (!preg_match('/^(\*?)\s*(\d{10})\s+(.+)$/', $linea, $matches)) {
                 continue;
             }
 
-            $numeroPedido = (string) (int) $matches[1];
-            $mensajeError = trim($matches[2]);
+            $isWarning = $matches[1] === '*';
+            $numeroPedido = (string) (int) $matches[2];
+            $mensaje = trim($matches[3]);
 
-            $erroresPorPedido[$numeroPedido][] = $mensajeError;
+            if ($isWarning) {
+                $resultado['warnings'][$numeroPedido][] = $mensaje;
+            } else {
+                $resultado['errors'][$numeroPedido][] = $mensaje;
+            }
         }
 
-        return $erroresPorPedido;
+        return $resultado;
     }
 
     private function marcarPedidoConError(string $numeroPedido, array $lineasError, string $archivoP99): bool
@@ -192,6 +206,34 @@ class CheckSiesaErrors extends Command
         ]);
 
         $this->info("Pedido #{$numeroPedido}: marcado como siesa_error");
+
+        return true;
+    }
+
+    private function marcarPedidoConAdvertencia(string $numeroPedido, array $lineasAdvertencia, string $archivoP99): bool
+    {
+        $order = Order::where('shopify_order_number', $numeroPedido)
+            ->whereIn('status', [
+                OrderStatusEnum::SENT_TO_SIESA->value,
+                OrderStatusEnum::RPA_PROCESSING->value,
+            ])
+            ->first();
+
+        if (!$order) {
+            $this->warn("Pedido #{$numeroPedido}: advertencia P99 ignorada; no encontrado en estado sent_to_siesa/rpa_processing");
+            return false;
+        }
+
+        $mensajeAdvertencia = implode(' | ', array_unique($lineasAdvertencia));
+
+        $this->orderRepository->updateStatus($order, OrderStatusEnum::RPA_PROCESSING, $mensajeAdvertencia);
+
+        $this->logService->logWarning($order, 'siesa_warning_detectada_desde_p99', [
+            'archivo_p99' => $archivoP99,
+            'advertencias' => $lineasAdvertencia,
+        ]);
+
+        $this->info("Pedido #{$numeroPedido}: marcado como rpa_processing por advertencia P99");
 
         return true;
     }

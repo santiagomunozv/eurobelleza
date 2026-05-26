@@ -14,7 +14,7 @@ class SyncShopifyOrders extends Command
      *
      * @var string
      */
-    protected $signature = 'shopify:sync-orders
+    protected $signature = 'shopify:sync-missing-orders
                             {--from= : Fecha desde (Y-m-d o "yesterday")}
                             {--to= : Fecha hasta (Y-m-d)}
                             {--dry-run : Simular sin guardar}';
@@ -24,7 +24,7 @@ class SyncShopifyOrders extends Command
      *
      * @var string
      */
-    protected $description = 'Sincroniza pedidos de Shopify que no llegaron por webhook';
+    protected $description = 'Crea en la base de datos los pedidos de Shopify que no llegaron por webhook';
 
     private ShopifyOrderSyncService $syncService;
     private ShopifyApiClient $apiClient;
@@ -159,17 +159,10 @@ class SyncShopifyOrders extends Command
             ['Pedidos encontrados en Shopify', $stats['orders_found']],
             ['Pedidos ya existentes en BD', $stats['orders_existing']],
             ['Pedidos faltantes', $stats['orders_missing']],
-            ['Pedidos procesados', $isDryRun ? 'N/A (dry-run)' : $stats['orders_processed']],
+            ['Pedidos creados y despachados', $isDryRun ? 'N/A (dry-run)' : $stats['orders_processed']],
             ['Pedidos omitidos (sin config/no pagados)', $isDryRun ? 'N/A (dry-run)' : ($stats['orders_skipped'] ?? 0)],
             ['Pedidos fallidos', $isDryRun ? 'N/A (dry-run)' : $stats['orders_failed']],
         ];
-
-        // Agregar estadísticas de no completados si hay datos
-        if (!$isDryRun && ($stats['non_completed_updated'] > 0 || $stats['non_completed_reprocessed'] > 0)) {
-            $rows[] = ['---', '---'];
-            $rows[] = ['Pedidos no completados actualizados', $stats['non_completed_updated']];
-            $rows[] = ['Pedidos no completados reprocesados', $stats['non_completed_reprocessed']];
-        }
 
         $this->table(['Métrica', 'Cantidad'], $rows);
 
@@ -184,7 +177,7 @@ class SyncShopifyOrders extends Command
 
         // Mensaje final
         $this->newLine();
-        if ($stats['orders_missing'] === 0 && $stats['non_completed_updated'] === 0) {
+        if ($stats['orders_missing'] === 0) {
             $this->info('✅ Todos los pedidos están sincronizados');
         } elseif ($isDryRun) {
             if ($stats['orders_missing'] > 0) {
@@ -194,10 +187,7 @@ class SyncShopifyOrders extends Command
         } else {
             $messages = [];
             if ($stats['orders_processed'] > 0) {
-                $messages[] = "{$stats['orders_processed']} pedidos nuevos procesados";
-            }
-            if ($stats['non_completed_reprocessed'] > 0) {
-                $messages[] = "{$stats['non_completed_reprocessed']} pedidos no completados reprocesados";
+                $messages[] = "{$stats['orders_processed']} pedidos nuevos creados y despachados";
             }
             if (!empty($messages)) {
                 $this->info('✅ Sincronización completada: ' . implode(', ', $messages));
