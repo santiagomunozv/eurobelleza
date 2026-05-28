@@ -140,6 +140,20 @@ class SiesaRunResultProcessor
                 ? 'Siesa reportó un error sin detalle en la corrida RPA.'
                 : implode(' | ', $errorLines);
 
+            if ($this->isDuplicateOrderError($errorLines)) {
+                $this->orderRepository->updateStatus($order, OrderStatusEnum::RPA_PROCESSING, $errorMessage);
+                $this->orderLogService->logWarning($order, 'rpa_run_duplicate_awaiting_p97', [
+                    'run_id' => $runId,
+                    'result_path' => $resultPath,
+                    'file_name' => $fileName,
+                    'p99_key' => $errorEntry['p99_key'],
+                    'errors' => $errorLines,
+                ]);
+                $awaitingConfirmation++;
+                $warnings++;
+                continue;
+            }
+
             $this->orderRepository->updateStatus($order, OrderStatusEnum::SIESA_ERROR, $errorMessage);
             $this->orderLogService->logError($order, 'rpa_run_completed_with_error', [
                 'run_id' => $runId,
@@ -219,6 +233,17 @@ class SiesaRunResultProcessor
         ]);
 
         return true;
+    }
+
+    private function isDuplicateOrderError(array $errorLines): bool
+    {
+        foreach ($errorLines as $line) {
+            if (str_contains(mb_strtoupper($line), 'CLIENTE YA TIENE ESTE PEDIDO')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function normalizeFileList(array $files): array

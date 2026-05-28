@@ -201,6 +201,19 @@ class CheckSiesaErrors extends Command
 
         $mensajeError = implode(' | ', array_unique($lineasError));
 
+        if ($this->esErrorPedidoDuplicado($lineasError)) {
+            $this->orderRepository->updateStatus($order, OrderStatusEnum::RPA_PROCESSING, $mensajeError);
+
+            $this->logService->logWarning($order, 'siesa_duplicate_awaiting_p97_desde_p99', [
+                'archivo_p99' => $archivoP99,
+                'errores' => $lineasError,
+            ]);
+
+            $this->info("Pedido #{$numeroPedido}: duplicado en Siesa; queda esperando P97");
+
+            return false;
+        }
+
         $this->orderRepository->updateStatus($order, OrderStatusEnum::SIESA_ERROR, $mensajeError);
 
         $this->logService->logError($order, 'siesa_error_detectado_desde_p99', [
@@ -211,6 +224,17 @@ class CheckSiesaErrors extends Command
         $this->info("Pedido #{$numeroPedido}: marcado como siesa_error");
 
         return true;
+    }
+
+    private function esErrorPedidoDuplicado(array $lineasError): bool
+    {
+        foreach ($lineasError as $linea) {
+            if (str_contains(mb_strtoupper($linea), 'CLIENTE YA TIENE ESTE PEDIDO')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function marcarPedidoConAdvertencia(string $numeroPedido, array $lineasAdvertencia, string $archivoP99): bool
