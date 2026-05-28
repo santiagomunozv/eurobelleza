@@ -37,7 +37,14 @@ class Kernel extends ConsoleKernel
 
         // Revisión de resultados y errores reportados por el RPA
         $schedule->command('siesa:process-rpa-results')
-            ->everyThirtyMinutes()
+            ->cron('5,35 * * * *')
+            ->withoutOverlapping()
+            ->timezone('America/Bogota');
+
+        // Confirmación contra P97: corre después de resultados/P99 para que P97 sea la verdad final
+        $schedule->command('siesa:reconcile-p97')
+            ->cron('10,40 * * * *')
+            ->withoutOverlapping()
             ->timezone('America/Bogota');
     }
 

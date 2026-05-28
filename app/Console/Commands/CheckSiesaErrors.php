@@ -88,6 +88,9 @@ class CheckSiesaErrors extends Command
                 if (($summary['unresolved'] ?? 0) > 0) {
                     $note .= " no_resueltos={$summary['unresolved']}";
                 }
+                if (($summary['skipped_completed'] ?? 0) > 0) {
+                    $note .= " ignorados_completed={$summary['skipped_completed']}";
+                }
                 if (!empty($summary['missing_files'])) {
                     $note .= ' faltantes=' . implode(',', $summary['missing_files']);
                 }

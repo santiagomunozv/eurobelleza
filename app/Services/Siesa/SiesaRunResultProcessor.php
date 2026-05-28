@@ -44,6 +44,7 @@ class SiesaRunResultProcessor
         $failed = 0;
         $warnings = 0;
         $unresolved = 0;
+        $skippedCompleted = 0;
         $missing = [];
 
         foreach ($filesAttempted as $fileName) {
@@ -51,6 +52,11 @@ class SiesaRunResultProcessor
 
             if (!$order) {
                 $missing[] = $fileName;
+                continue;
+            }
+
+            if ($this->skipIfAlreadyConfirmed($order, $runId, $resultPath, $fileName, 'attempted')) {
+                $skippedCompleted++;
                 continue;
             }
 
@@ -71,6 +77,11 @@ class SiesaRunResultProcessor
                 continue;
             }
 
+            if ($this->skipIfAlreadyConfirmed($order, $runId, $resultPath, $fileName, 'without_error')) {
+                $skippedCompleted++;
+                continue;
+            }
+
             $this->orderRepository->updateStatus($order, OrderStatusEnum::RPA_PROCESSING);
             $this->orderLogService->logSuccess($order, 'rpa_run_awaiting_p97_without_error', [
                 'run_id' => $runId,
@@ -86,6 +97,11 @@ class SiesaRunResultProcessor
 
             if (!$order) {
                 $missing[] = $fileName;
+                continue;
+            }
+
+            if ($this->skipIfAlreadyConfirmed($order, $runId, $resultPath, $fileName, 'warning')) {
+                $skippedCompleted++;
                 continue;
             }
 
@@ -114,6 +130,11 @@ class SiesaRunResultProcessor
                 continue;
             }
 
+            if ($this->skipIfAlreadyConfirmed($order, $runId, $resultPath, $fileName, 'error')) {
+                $skippedCompleted++;
+                continue;
+            }
+
             $errorLines = $errorEntry['errors'];
             $errorMessage = empty($errorLines)
                 ? 'Siesa reportó un error sin detalle en la corrida RPA.'
@@ -136,6 +157,11 @@ class SiesaRunResultProcessor
 
             if (!$order) {
                 $missing[] = $fileName;
+                continue;
+            }
+
+            if ($this->skipIfAlreadyConfirmed($order, $runId, $resultPath, $fileName, 'unresolved')) {
+                $skippedCompleted++;
                 continue;
             }
 
@@ -168,9 +194,31 @@ class SiesaRunResultProcessor
             'failed' => $failed,
             'warnings' => $warnings,
             'unresolved' => $unresolved,
+            'skipped_completed' => $skippedCompleted,
             'missing_files' => array_values(array_unique($missing)),
             'fatal_error' => $fatalError,
         ];
+    }
+
+    private function skipIfAlreadyConfirmed(
+        Order $order,
+        string $runId,
+        string $resultPath,
+        string $fileName,
+        string $category
+    ): bool {
+        if (!$order->status->isCompleted()) {
+            return false;
+        }
+
+        $this->orderLogService->logInfo($order, 'rpa_result_ignored_after_p97_confirmation', [
+            'run_id' => $runId,
+            'result_path' => $resultPath,
+            'file_name' => $fileName,
+            'category' => $category,
+        ]);
+
+        return true;
     }
 
     private function normalizeFileList(array $files): array
