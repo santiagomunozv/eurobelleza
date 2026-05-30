@@ -64,7 +64,7 @@ class OrderRepository
         $data = ['status' => $status->value];
 
         if ($errorMessage !== null) {
-            $data['error_message'] = $errorMessage;
+            $data['error_message'] = $this->normalizeTextForDatabase($errorMessage);
         } elseif (in_array($status, [
             OrderStatusEnum::PENDING,
             OrderStatusEnum::PROCESSING,
@@ -82,5 +82,22 @@ class OrderRepository
         }
 
         return $order->update($data);
+    }
+
+    private function normalizeTextForDatabase(string $value): string
+    {
+        if (!mb_check_encoding($value, 'UTF-8')) {
+            $converted = @mb_convert_encoding($value, 'UTF-8', 'CP850');
+
+            if ($converted === false || !mb_check_encoding($converted, 'UTF-8')) {
+                $converted = mb_convert_encoding($value, 'UTF-8', 'ISO-8859-1');
+            }
+
+            $value = $converted;
+        }
+
+        $value = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $value);
+
+        return trim($value ?? '');
     }
 }

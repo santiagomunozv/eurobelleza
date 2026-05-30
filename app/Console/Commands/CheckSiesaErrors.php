@@ -161,6 +161,8 @@ class CheckSiesaErrors extends Command
 
     private function parsearP99Legado(string $contenido): array
     {
+        $contenido = $this->normalizarContenidoP99($contenido);
+
         $resultado = [
             'errors' => [],
             'warnings' => [],
@@ -183,6 +185,21 @@ class CheckSiesaErrors extends Command
         }
 
         return $resultado;
+    }
+
+    private function normalizarContenidoP99(string $contenido): string
+    {
+        if (mb_check_encoding($contenido, 'UTF-8')) {
+            return $contenido;
+        }
+
+        $contenidoConvertido = @mb_convert_encoding($contenido, 'UTF-8', 'CP850');
+
+        if ($contenidoConvertido !== false && mb_check_encoding($contenidoConvertido, 'UTF-8')) {
+            return $contenidoConvertido;
+        }
+
+        return mb_convert_encoding($contenido, 'UTF-8', 'ISO-8859-1');
     }
 
     private function marcarPedidoConError(string $numeroPedido, array $lineasError, string $archivoP99): bool
