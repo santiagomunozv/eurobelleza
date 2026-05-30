@@ -24,15 +24,15 @@ class SiesaP97Reconciler
         $recordsByOrderNumber = $records->keyBy('normalized_order_number');
         $dateFrom = $parsedReport['date_from'] ?? null;
         $dateTo = $parsedReport['date_to'] ?? null;
+        $coveredUntil = $this->latestRecordDate($records) ?? $dateTo;
 
         $confirmed = $this->confirmPresentOrders($sourceFile, $recordsByOrderNumber, $dryRun);
         $reopened = $this->reopenMissingOrders(
             $sourceFile,
             $recordsByOrderNumber,
             $dateFrom,
-            $dateTo,
-            $dryRun,
-            now()->subDay()
+            $coveredUntil,
+            $dryRun
         );
 
         return [
@@ -69,6 +69,10 @@ class SiesaP97Reconciler
 
                     $previousStatus = $order->status->value;
 
+                    if ($this->isAlreadyConfirmedWithSameRecord($order, $record)) {
+                        continue;
+                    }
+
                     $order->update([
                         'status' => 'completed',
                         'error_message' => null,
@@ -95,15 +99,40 @@ class SiesaP97Reconciler
         return $confirmed;
     }
 
+    private function latestRecordDate(Collection $records): ?CarbonImmutable
+    {
+        return $records->reduce(function (?CarbonImmutable $latest, array $record) {
+            $orderDate = $record['order_date'] ?? null;
+
+            if (!$orderDate instanceof CarbonImmutable) {
+                return $latest;
+            }
+
+            if (!$latest || $orderDate->greaterThan($latest)) {
+                return $orderDate;
+            }
+
+            return $latest;
+        });
+    }
+
+    private function isAlreadyConfirmedWithSameRecord(Order $order, array $record): bool
+    {
+        return $order->status->isCompleted()
+            && $order->siesa_order_number === $record['siesa_order_number']
+            && $order->siesa_document_alt === $record['document_alt']
+            && optional($order->siesa_order_date)->toDateString() === $record['order_date']->toDateString()
+            && $order->siesa_erp_status === $record['erp_status'];
+    }
+
     private function reopenMissingOrders(
         string $sourceFile,
         Collection $recordsByOrderNumber,
         ?CarbonImmutable $dateFrom,
-        ?CarbonImmutable $dateTo,
-        bool $dryRun,
-        $staleSentToSiesaBefore
+        ?CarbonImmutable $coveredUntil,
+        bool $dryRun
     ): int {
-        if (!$dateFrom || !$dateTo) {
+        if (!$dateFrom || !$coveredUntil) {
             return 0;
         }
 
@@ -116,15 +145,8 @@ class SiesaP97Reconciler
                 'rpa_processing',
                 'sent_to_siesa',
             ])
-            ->whereBetween('created_at', [$dateFrom->startOfDay(), $dateTo->endOfDay()])
+            ->whereBetween('created_at', [$dateFrom->startOfDay(), $coveredUntil->endOfDay()])
             ->whereNotIn('shopify_order_number', $documentAltSet->all())
-            ->where(function ($query) use ($staleSentToSiesaBefore) {
-                $query->whereIn('status', ['completed', 'rpa_processing'])
-                    ->orWhere(function ($sentToSiesaQuery) use ($staleSentToSiesaBefore) {
-                        $sentToSiesaQuery->where('status', 'sent_to_siesa')
-                            ->where('updated_at', '<=', $staleSentToSiesaBefore);
-                    });
-            })
             ->orderBy('id')
             ->chunkById(200, function (Collection $orders) use ($sourceFile, $dryRun, &$reopened) {
                 foreach ($orders as $order) {
