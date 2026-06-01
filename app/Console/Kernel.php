@@ -15,24 +15,24 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule)
     {
-        // Recupera pedidos que no llegaron por webhook
+        // Recupera pedidos que no llegaron por webhook antes de cada ventana del RPA
         $schedule->command('shopify:sync-missing-orders')
-            ->dailyAt('02:00')
+            ->cron('15 6,12,18 * * *')
             ->timezone('America/Bogota');
 
-        // Actualiza datos frescos de Shopify sin despachar reprocesos
+        // Actualiza datos frescos de Shopify sin despachar reprocesos antes de cada ventana del RPA
         $schedule->command('orders:refresh-shopify-data --non-completed --days=5')
-            ->dailyAt('02:20')
+            ->cron('25 6,12,18 * * *')
             ->timezone('America/Bogota');
 
         // Marcado de pagos vencidos que ya no deben quedar como pendientes operativos
         $schedule->command('orders:mark-expired-payments --days=3 --max-days=30')
-            ->dailyAt('02:30')
+            ->cron('35 6,12,18 * * *')
             ->timezone('America/Bogota');
 
-        // Despacha a cola los pedidos que sí se van a procesar
+        // Despacha a cola los pedidos que sí se van a procesar antes de que el RPA lea S3
         $schedule->command('orders:dispatch-pending --validate')
-            ->dailyAt('03:00')
+            ->cron('45 6,12,18 * * *')
             ->timezone('America/Bogota');
 
         // Revisión de resultados y errores reportados por el RPA
