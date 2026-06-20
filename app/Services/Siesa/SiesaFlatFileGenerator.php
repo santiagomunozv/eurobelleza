@@ -53,11 +53,7 @@ class SiesaFlatFileGenerator
         $lines = [];
         foreach ($lineItems as $lineItem) {
             // Detectar si es producto de obsequio (precio final = 0)
-            $basePrice = floatval($lineItem['price'] ?? 0);
-            $discountAllocations = $lineItem['discount_allocations'] ?? [];
-            $discountAmount = !empty($discountAllocations) ? floatval($discountAllocations[0]['amount'] ?? 0) : 0;
-            $finalPrice = $basePrice - $discountAmount;
-            $isGift = ($finalPrice == 0);
+            $isGift = $this->isGiftLine($lineItem);
 
             $lines[] = $this->generateLine($commonData, $lineItem, $config, false, $isGift);
         }
@@ -333,13 +329,8 @@ class SiesaFlatFileGenerator
         $line .= SiesaFileStructure::padRight('', SiesaFileStructure::LISTA_DESCUENTO_LENGTH);
 
         // 20) Posiciones 137-148: Precio unitario
-        // Calcular precio con descuento aplicado (si existe)
-        $basePrice = floatval($lineItem['price'] ?? 0);
-        $discountAllocations = $lineItem['discount_allocations'] ?? [];
-        $discountAmount = !empty($discountAllocations) ? floatval($discountAllocations[0]['amount'] ?? 0) : 0;
-        $finalPrice = $basePrice - $discountAmount;
-
-        $line .= SiesaFileStructure::formatPrice($finalPrice);
+        // Shopify entrega discount_allocations.amount como descuento total de la línea.
+        $line .= SiesaFileStructure::formatPrice($this->calculateFinalUnitPrice($lineItem));
 
         // 21) Posiciones 149-152: Descuento línea 1
         $line .= SiesaFileStructure::formatPercentage(0);
@@ -388,5 +379,39 @@ class SiesaFlatFileGenerator
         $line .= SiesaFileStructure::padRight($commonData['documento_alterno'], SiesaFileStructure::DOCUMENTO_ALTERNO_LENGTH);
 
         return $line;
+    }
+
+    private function isGiftLine(array $lineItem): bool
+    {
+        $quantity = intval($lineItem['quantity'] ?? 0);
+
+        if ($quantity <= 0) {
+            return false;
+        }
+
+        $basePrice = floatval($lineItem['price'] ?? 0);
+        $lineTotal = ($basePrice * $quantity) - $this->calculateLineDiscountAmount($lineItem);
+
+        return $lineTotal == 0.0;
+    }
+
+    private function calculateFinalUnitPrice(array $lineItem): float
+    {
+        $quantity = intval($lineItem['quantity'] ?? 0);
+        $basePrice = floatval($lineItem['price'] ?? 0);
+
+        if ($quantity <= 0) {
+            return $basePrice;
+        }
+
+        $lineTotal = ($basePrice * $quantity) - $this->calculateLineDiscountAmount($lineItem);
+
+        return $lineTotal / $quantity;
+    }
+
+    private function calculateLineDiscountAmount(array $lineItem): float
+    {
+        return collect($lineItem['discount_allocations'] ?? [])
+            ->sum(fn($allocation) => floatval($allocation['amount'] ?? 0));
     }
 }
