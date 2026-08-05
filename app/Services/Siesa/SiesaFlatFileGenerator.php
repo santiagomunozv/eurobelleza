@@ -11,6 +11,9 @@ use App\Services\OrderLogService;
 
 class SiesaFlatFileGenerator
 {
+    private const USE_FIXED_BARRANQUILLA_WAREHOUSE = true;
+    private const FIXED_BARRANQUILLA_LOCATION_ID = 80414146731;
+
     private OrderLogService $orderLogService;
     private SiesaWarehouseMappingRepository $warehouseRepository;
 
@@ -119,7 +122,7 @@ class SiesaFlatFileGenerator
         $orderNumber = (string)($orderData['order_number'] ?? '');
         $documentoAlterno = str_pad($orderNumber, 8, '0', STR_PAD_LEFT);
 
-        // Validar y obtener bodega y localización por fulfillment location_id
+        // Por ahora se fuerza Barranquilla, manteniendo disponible la resolución por Shopify.
         $warehouseMapping = $this->validateAndGetWarehouseMapping($order, $orderData);
 
         return [
@@ -143,8 +146,8 @@ class SiesaFlatFileGenerator
     }
 
     /**
-     * Valida y obtiene el mapping de bodega desde Shopify fulfillments
-     * Lanza excepción si no se encuentra configuración de bodega
+     * Valida y obtiene el mapping de bodega requerido.
+     * Lanza excepción si no se encuentra configuración de bodega.
      *
      * @param Order $order Pedido de Shopify
      * @param array $orderData JSON del pedido de Shopify
@@ -152,6 +155,32 @@ class SiesaFlatFileGenerator
      * @throws \Exception
      */
     private function validateAndGetWarehouseMapping(Order $order, array $orderData): \App\Models\SiesaWarehouseMapping
+    {
+        if (!self::USE_FIXED_BARRANQUILLA_WAREHOUSE) {
+            return $this->resolveWarehouseMappingFromOrderData($order, $orderData);
+        }
+
+        return $this->resolveFixedBarranquillaWarehouseMapping($order);
+    }
+
+    private function resolveFixedBarranquillaWarehouseMapping(Order $order): \App\Models\SiesaWarehouseMapping
+    {
+        $warehouseMapping = $this->warehouseRepository->findByShopifyLocationId(self::FIXED_BARRANQUILLA_LOCATION_ID);
+
+        if (!$warehouseMapping) {
+            $this->orderLogService->logError($order, 'warehouse_mapping_not_found', [
+                'location_id' => self::FIXED_BARRANQUILLA_LOCATION_ID,
+                'warehouse_name' => 'BODEGA BARRANQUILLA',
+                'error' => 'No existe configuración de bodega fija para BODEGA BARRANQUILLA',
+                'order_number' => $order->shopify_order_number
+            ]);
+            throw new \Exception('No existe configuración de bodega fija para BODEGA BARRANQUILLA (location_id: ' . self::FIXED_BARRANQUILLA_LOCATION_ID . '). Por favor configure esta ubicación en el sistema.');
+        }
+
+        return $warehouseMapping;
+    }
+
+    private function resolveWarehouseMappingFromOrderData(Order $order, array $orderData): \App\Models\SiesaWarehouseMapping
     {
         $fulfillments = $orderData['fulfillments'] ?? [];
         $locationId = $fulfillments[0]['location_id'] ?? null;

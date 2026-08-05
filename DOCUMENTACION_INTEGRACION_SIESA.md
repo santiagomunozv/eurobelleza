@@ -114,7 +114,9 @@ $mapping = $this->siesaPaymentGatewayRepository->findByShopifyGateway($gateway);
 
 **Tabla:** `siesa_warehouse_mappings`
 
-**Propósito:** Mapea las ubicaciones de Shopify (location_id de fulfillments) con códigos de bodega y ubicación de SIESA.
+**Propósito:** Mapea las ubicaciones de Shopify con códigos de bodega y ubicación de SIESA.
+
+**Configuración vigente:** Por solicitud operativa, la integración usa temporalmente una bodega fija para todos los pedidos: `80414146731 → BODEGA BARRANQUILLA → 001/17`. El `location_id` de `fulfillments` de Shopify no determina la bodega mientras esta regla esté activa.
 
 **Campos:**
 
@@ -127,10 +129,15 @@ $mapping = $this->siesaPaymentGatewayRepository->findByShopifyGateway($gateway);
 - timestamps
 ```
 
-**Datos Seeder (5 ubicaciones):**
+**Datos vigentes:**
 
 ```
-80414146731 → BODEGA BARRANQUILLA → 001/15
+80414146731 → BODEGA BARRANQUILLA → 001/17
+```
+
+**Datos históricos/otros mappings:**
+
+```
 80414245035 → BODEGA BOGOTÁ → 001/15
 80414113963 → BODEGA CALI → 001/15
 80414081195 → BODEGA SABANETA → 001/15
@@ -146,7 +153,7 @@ $mapping = $this->siesaPaymentGatewayRepository->findByShopifyGateway($gateway);
 
 ```php
 // Repository
-$mapping = $this->warehouseRepository->findByShopifyLocationId($locationId);
+$mapping = $this->warehouseRepository->findByShopifyLocationId(80414146731);
 
 // Retorna: SiesaWarehouseMapping | null
 ```
@@ -446,33 +453,37 @@ docker exec eurobelleza-back php artisan queue:flush
 
 ### Matriz Rápida de Uso (Actualizada)
 
-| Escenario | Comando recomendado | Ejemplo | Cuándo usar |
-|---|---|---|---|
-| Sincronización diaria normal | `shopify:sync-orders` | `docker exec eurobelleza-back php artisan shopify:sync-orders` | Operación estándar diaria (también corre por schedule a las 02:00 America/Bogota). |
-| Reproceso masivo de no completados | `orders:reprocess --status=all --validate` | `docker exec eurobelleza-back php artisan orders:reprocess --status=all --validate` | Reintentar pendientes/fallidos/procesando con validación previa. |
-| Reproceso masivo solo fallidos | `orders:reprocess --status=failed --validate` | `docker exec eurobelleza-back php artisan orders:reprocess --status=failed --validate` | Incidentes donde quieres atacar solo fallidos. |
-| Reproceso controlado por volumen | `orders:reprocess --status=all --limit=N --validate` | `docker exec eurobelleza-back php artisan orders:reprocess --status=all --limit=100 --validate` | Evitar saturar cola al reprocesar lotes grandes. |
-| Refrescar pedidos puntuales desde Shopify | `orders:refresh --ids=...` | `docker exec eurobelleza-back php artisan orders:refresh --ids=120 --ids=121 --reprocess` | Soporte puntual/tickets específicos. |
-| Refrescar todos no completados | `orders:refresh --non-completed --reprocess` | `docker exec eurobelleza-back php artisan orders:refresh --non-completed --reprocess` | Sospecha de JSON desactualizado/incompleto en muchos pedidos. |
-| Refrescar pendientes sin fulfillments | `orders:refresh --pending-without-fulfillments --reprocess` | `docker exec eurobelleza-back php artisan orders:refresh --pending-without-fulfillments --reprocess` | Caso específico de pedidos sin `fulfillments/location_id`. |
+| Escenario                                 | Comando recomendado                                    | Ejemplo                                                                                         | Cuándo usar                                                             |
+| ----------------------------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Sincronización de pedidos faltantes       | `shopify:sync-missing-orders`                          | `docker exec eurobelleza-back php artisan shopify:sync-missing-orders`                          | Recupera pedidos que no llegaron por webhook antes de cada ventana RPA. |
+| Refrescar datos desde Shopify             | `orders:refresh-shopify-data --non-completed --days=5` | `docker exec eurobelleza-back php artisan orders:refresh-shopify-data --non-completed --days=5` | Actualiza JSON reciente sin despachar reprocesos directamente.          |
+| Despachar pendientes pagados              | `orders:dispatch-pending --validate`                   | `docker exec eurobelleza-back php artisan orders:dispatch-pending --validate`                   | Encola pedidos `pending` válidos antes de cada corrida RPA.             |
+| Reproceso masivo de no completados        | `orders:reprocess --status=all --validate`             | `docker exec eurobelleza-back php artisan orders:reprocess --status=all --validate`             | Reintentar pendientes/fallidos/procesando con validación previa.        |
+| Reproceso masivo solo fallidos            | `orders:reprocess --status=failed --validate`          | `docker exec eurobelleza-back php artisan orders:reprocess --status=failed --validate`          | Incidentes donde quieres atacar solo fallidos.                          |
+| Reproceso controlado por volumen          | `orders:reprocess --status=all --limit=N --validate`   | `docker exec eurobelleza-back php artisan orders:reprocess --status=all --limit=100 --validate` | Evitar saturar cola al reprocesar lotes grandes.                        |
+| Refrescar pedidos puntuales desde Shopify | `orders:refresh-shopify-data --ids=...`                | `docker exec eurobelleza-back php artisan orders:refresh-shopify-data --ids=120 --ids=121`      | Soporte puntual/tickets específicos.                                    |
+| Procesar resultados RPA                   | `siesa:process-rpa-results`                            | `docker exec eurobelleza-back php artisan siesa:process-rpa-results`                            | Consume JSON de corrida y `.P99` reportados por el bot.                 |
+| Confirmar pedidos en Siesa                | `siesa:reconcile-p97`                                  | `docker exec eurobelleza-back php artisan siesa:reconcile-p97`                                  | Usa P97 como confirmación final de pedidos creados en Siesa.            |
 
-> Nota: `orders:refresh` es principalmente una herramienta de soporte/diagnóstico; para operación diaria se recomienda `shopify:sync-orders` + `orders:reprocess`.
+> Nota: para operación diaria se recomienda el ciclo programado `shopify:sync-missing-orders` + `orders:refresh-shopify-data` + `orders:dispatch-pending` antes de cada ventana RPA.
 
 ### 1. SyncShopifyOrders (Sincronización Diaria)
 
 **Archivo:** `app/Console/Commands/SyncShopifyOrders.php`
 
-**Propósito:** Sincroniza órdenes pendientes con Shopify y detecta órdenes nuevas/faltantes.
+**Propósito:** Detecta y crea en base de datos órdenes de Shopify que no llegaron por webhook.
 
 **Firma:**
 
 ```bash
-php artisan shopify:sync-orders {--days=7}
+php artisan shopify:sync-missing-orders {--from=} {--to=} {--dry-run}
 ```
 
 **Opciones:**
 
-- `--days=7` - Días hacia atrás para buscar órdenes (default: 7)
+- `--from=` - Fecha inicial (`Y-m-d` o `yesterday`)
+- `--to=` - Fecha final (`Y-m-d`)
+- `--dry-run` - Simula sin guardar cambios
 
 **Funcionalidades:**
 
@@ -491,11 +502,11 @@ php artisan shopify:sync-orders {--days=7}
 **Ejecución manual:**
 
 ```bash
-# Sincronizar últimos 7 días
-docker exec eurobelleza-back php artisan shopify:sync-orders
+# Sincronizar rango por defecto
+docker exec eurobelleza-back php artisan shopify:sync-missing-orders
 
-# Sincronizar últimos 30 días
-docker exec eurobelleza-back php artisan shopify:sync-orders --days=30
+# Sincronizar una fecha específica
+docker exec eurobelleza-back php artisan shopify:sync-missing-orders --from=2026-03-06 --to=2026-03-06
 ```
 
 **Cron Schedule (Automático):**
@@ -504,8 +515,8 @@ docker exec eurobelleza-back php artisan shopify:sync-orders --days=30
 // app/Console/Kernel.php
 protected function schedule(Schedule $schedule)
 {
-    $schedule->command('shopify:sync-orders --days=7')
-             ->dailyAt('02:00')
+    $schedule->command('shopify:sync-missing-orders')
+             ->cron('15 6,12,18 * * *')
              ->timezone('America/Bogota');
 }
 ```
@@ -586,14 +597,15 @@ Resumen:
 **Firma:**
 
 ```bash
-php artisan orders:refresh {--ids=*} {--pending-without-fulfillments} {--reprocess}
+php artisan orders:refresh-shopify-data {--ids=*} {--pending-without-fulfillments} {--non-completed} {--days=30}
 ```
 
 **Opciones:**
 
 - `--ids=*` - IDs específicos de órdenes a actualizar (repetible)
 - `--pending-without-fulfillments` - Actualizar todas las órdenes pending sin fulfillments
-- `--reprocess` - Validar y encolar jobs automáticamente si ahora son válidas
+- `--non-completed` - Actualizar pedidos no completados dentro de la ventana de días
+- `--days=30` - Ventana de días para `--non-completed`
 
 **Casos de uso:**
 
@@ -601,20 +613,14 @@ php artisan orders:refresh {--ids=*} {--pending-without-fulfillments} {--reproce
 
 ```bash
 # Actualizar órdenes 6 y 7
-docker exec eurobelleza-back php artisan orders:refresh --ids=6 --ids=7
-
-# Actualizar y reprocesar automáticamente
-docker exec eurobelleza-back php artisan orders:refresh --ids=6 --ids=7 --reprocess
+docker exec eurobelleza-back php artisan orders:refresh-shopify-data --ids=6 --ids=7
 ```
 
 **2. Actualizar todas las pending sin fulfillments:**
 
 ```bash
 # Solo actualizar (no encolar)
-docker exec eurobelleza-back php artisan orders:refresh --pending-without-fulfillments
-
-# Actualizar y reprocesar las que ahora sean válidas
-docker exec eurobelleza-back php artisan orders:refresh --pending-without-fulfillments --reprocess
+docker exec eurobelleza-back php artisan orders:refresh-shopify-data --pending-without-fulfillments
 ```
 
 **Flujo interno:**
@@ -667,19 +673,18 @@ Actualizando datos desde Shopify...
 
 ```php
 ✅ Verifica:
-   - Existen fulfillments en el pedido
-   - fulfillments[0] tiene location_id
-   - Existe mapeo para ese location_id
+    - Existe el mapping fijo de Barranquilla
+    - Shopify Location ID: 80414146731
+    - Código bodega/localización: 001/17
 
 ❌ Errores posibles:
-   - "El pedido no tiene información de fulfillments"
-   - "El fulfillment no tiene location_id"
-   - "No existe mapeo para la ubicación: {location_id}"
+    - "Falta configuración de bodega fija BODEGA BARRANQUILLA para location_id: 80414146731"
 
 💡 Solución:
-   - Esperar a que se genere fulfillment en Shopify
-   - Crear mapeo en /admin/siesa/warehouses
+    - Crear o corregir el mapeo 80414146731 → BODEGA BARRANQUILLA → 001/17 en /admin/siesa/warehouses
 ```
+
+> Nota técnica: el código conserva la resolución anterior por `fulfillments[0].location_id` y fallback a única bodega configurada, pero por ahora está desactivada mediante la bandera interna que fuerza Barranquilla.
 
 ### Uso en el código
 
@@ -746,17 +751,17 @@ public function updatePendingOrders(): void
 
 **Casos que cubre:**
 
-1. **Orden creada sin fulfillment →** Fulfillment agregado después
-    - Primera ejecución: Sin fulfillments → Queda pending
-    - Segunda ejecución: Con fulfillments → Validación pasa → Se procesa ✅
+1. **Orden creada sin fulfillment →** JSON actualizado después
+    - Con la regla vigente de bodega fija, la falta de fulfillment ya no bloquea la bodega
+    - El refresh sigue actualizando datos frescos de Shopify para otros campos operativos
 
 2. **Orden con pasarela no mapeada →** Mapeo creado después
     - Primera ejecución: Sin mapeo → Queda pending
     - Segunda ejecución: Con mapeo → Validación pasa → Se procesa ✅
 
-3. **Orden con location_id no mapeado →** Ubicación agregada después
-    - Primera ejecución: Sin ubicación → Queda pending
-    - Segunda ejecución: Con ubicación → Validación pasa → Se procesa ✅
+3. **Bodega fija de Barranquilla no configurada →** Mapping creado después
+    - Primera ejecución: Falta `80414146731` → Queda failed o pendiente según punto de entrada
+    - Segunda ejecución: Con mapping `80414146731 → 001/17` → Validación pasa → Se procesa ✅
 
 4. **Orden pagada después →** financial_status cambia a 'paid'
     - Primera ejecución: Unpaid → Queda pending
@@ -931,12 +936,12 @@ docker exec eurobelleza-back php artisan tinker
 5. Valida configuración:
    ✅ Configuración general existe
    ✅ Pasarela 'bogota' mapeada → forma_pago: '12'
-   ✅ Fulfillment con location_id 80414146731 → bodega: '001', ubicación: '15'
+    ✅ Bodega fija BARRANQUILLA configurada → location_id 80414146731 → bodega: '001', ubicación: '17'
 6. Validación exitosa → Encola ProcessShopifyOrder job
 7. Worker procesa job:
    - Genera 00062394.PE0
    - Genera 00062394.txt
-   - Actualiza status → completed
+    - Actualiza status → sent_to_siesa
    - Registra log de éxito
 ```
 
@@ -944,40 +949,21 @@ docker exec eurobelleza-back php artisan tinker
 
 ---
 
-### 2. Orden Sin Fulfillments (Auto-Recuperación)
+### 2. Orden Sin Fulfillments
 
-**Escenario:** Orden creada el 17 de febrero sin asignación de bodega, bodega asignada el 8 de marzo.
+**Escenario:** Orden creada sin fulfillment o sin bodega asignada en Shopify.
 
 **Flujo:**
 
 ```
 17 Feb - 10:00 AM:
 1. Webhook llega → orden pagada pero sin fulfillments
-2. Validación falla: "El pedido no tiene información de fulfillments"
-3. Orden queda en estado: pending
-4. Log: configuration_validation_failed
-
-18 Feb - 02:00 AM (cron diario):
-5. Sync consulta orden desde Shopify
-6. Actualiza order_json (aún sin fulfillments)
-7. Validación falla → Sigue pending
-
-... (mismo proceso diario hasta 8 de marzo)
-
-8 Mar - 01:00 PM (bodega asignada en Shopify):
-- Usuario asigna fulfilment en Shopify admin
-- location_id: 80414146731
-
-8 Mar - 02:00 AM siguiente día (cron diario):
-8. Sync consulta orden desde Shopify
-9. Actualiza order_json (AHORA con fulfillments)
-10. Validación exitosa ✅
-11. Encola ProcessShopifyOrder job
-12. Worker procesa → Archivos generados
-13. Status → completed
+2. Validación usa la bodega fija de Barranquilla, no el fulfillment del pedido
+3. Si existe el mapping 80414146731 → 001/17, la orden puede procesarse
+4. El archivo queda en S3 y el pedido pasa a sent_to_siesa
 ```
 
-**Resultado:** Recuperación automática sin intervención manual.
+**Resultado:** Mientras la bodega fija esté activa, la falta de fulfillment no bloquea la selección de bodega. La lógica anterior por fulfillment sigue conservada en código para reactivarla cuando se requiera.
 
 ---
 
@@ -1016,6 +1002,10 @@ docker exec eurobelleza-back php artisan orders:reprocess --limit=1 --validate
 ### 4. Nueva Ubicación de Shopify
 
 **Escenario:** Se abre nueva bodega en Shopify con location_id: 99988877766.
+
+**Estado vigente:** No afecta la generación del archivo plano mientras la regla temporal de Barranquilla fija esté activa. Todos los pedidos usan `80414146731 → BODEGA BARRANQUILLA → 001/17`.
+
+**Cuando se reactive la resolución dinámica por fulfillment, aplicará este flujo:**
 
 **Problema identificado:**
 
@@ -1075,13 +1065,13 @@ docker exec eurobelleza-back php artisan queue:retry {id}
 
 ```bash
 # Opción 1: Actualizar órdenes específicas
-docker exec eurobelleza-back php artisan orders:refresh --ids=6 --ids=7 --ids=8 --reprocess
+docker exec eurobelleza-back php artisan orders:refresh-shopify-data --ids=6 --ids=7 --ids=8
 
 # Opción 2: Actualizar todas las pending sin fulfillments
-docker exec eurobelleza-back php artisan orders:refresh --pending-without-fulfillments --reprocess
+docker exec eurobelleza-back php artisan orders:refresh-shopify-data --pending-without-fulfillments
 
-# Opción 3: Dejar que el sync diario lo haga automáticamente
-# (no hacer nada, esperar a las 02:00 AM)
+# Opción 3: Despachar pendientes después de refrescar
+docker exec eurobelleza-back php artisan orders:dispatch-pending --validate
 ```
 
 ---
@@ -1108,15 +1098,15 @@ docker exec eurobelleza-back php artisan orders:refresh --pending-without-fulfil
 - shopify_payments → 03 (Tarjeta)
 ```
 
-### ✅ 3. Mapear Ubicaciones de Shopify
+### ✅ 3. Mapear Bodega Fija de Barranquilla
 
 ```bash
 # Acceder a: /admin/siesa/warehouses
-# Crear mapeo para cada ubicación:
-- 80414146731 → BODEGA BARRANQUILLA → 001/15
-- 80414245035 → BODEGA BOGOTÁ → 002/20
-# etc...
+# Crear o verificar el mapeo activo:
+- 80414146731 → BODEGA BARRANQUILLA → 001/17
 ```
+
+> La lógica para mapear múltiples ubicaciones de Shopify se conserva en código, pero temporalmente no se usa para seleccionar la bodega del archivo Siesa.
 
 ### ✅ 4. Configurar Webhook en Shopify
 
@@ -1131,8 +1121,8 @@ Evento: Order payment → Order paid
 
 ```bash
 # Verificar en Kernel.php:
-$schedule->command('shopify:sync-orders --days=7')
-         ->dailyAt('02:00')
+$schedule->command('shopify:sync-missing-orders')
+         ->cron('15 6,12,18 * * *')
          ->timezone('America/Bogota');
 
 # Activar cron en servidor:
@@ -1279,13 +1269,22 @@ docker exec eurobelleza-back find storage/app/siesa/pedidos/$(date +%Y%m%d)/ -ty
 
 ```bash
 # SINCRONIZACIÓN
-docker exec eurobelleza-back php artisan shopify:sync-orders --days=7
+docker exec eurobelleza-back php artisan shopify:sync-missing-orders
+
+# REFRESCAR JSON SHOPIFY
+docker exec eurobelleza-back php artisan orders:refresh-shopify-data --non-completed --days=5
+
+# DESPACHAR PENDIENTES
+docker exec eurobelleza-back php artisan orders:dispatch-pending --validate
 
 # REPROCESAMIENTO
 docker exec eurobelleza-back php artisan orders:reprocess --limit=10 --validate
 
-# ACTUALIZAR JSON
-docker exec eurobelleza-back php artisan orders:refresh --pending-without-fulfillments --reprocess
+# RESULTADOS RPA
+docker exec eurobelleza-back php artisan siesa:process-rpa-results
+
+# CONFIRMACIÓN P97
+docker exec eurobelleza-back php artisan siesa:reconcile-p97
 
 # QUEUE WORKER
 docker exec eurobelleza-back php artisan queue:work --stop-when-empty

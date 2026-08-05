@@ -8,6 +8,9 @@ use App\Repositories\SiesaWarehouseMappingRepository;
 
 class OrderConfigurationValidator
 {
+    private const USE_FIXED_BARRANQUILLA_WAREHOUSE = true;
+    private const FIXED_BARRANQUILLA_LOCATION_ID = 80414146731;
+
     public function __construct(
         private SiesaWarehouseMappingRepository $warehouseRepository
     ) {}
@@ -45,7 +48,9 @@ class OrderConfigurationValidator
         $warehouseError = $this->validateWarehouseMapping($orderData);
         if ($warehouseError) {
             $errors[] = $warehouseError;
-            $details['warehouse_location_id'] = $orderData['fulfillments'][0]['location_id'] ?? 'undefined';
+            $details['warehouse_location_id'] = self::USE_FIXED_BARRANQUILLA_WAREHOUSE
+                ? self::FIXED_BARRANQUILLA_LOCATION_ID
+                : ($orderData['fulfillments'][0]['location_id'] ?? 'undefined');
         } else {
             $details['warehouse_location_id'] = 'ok';
         }
@@ -97,12 +102,27 @@ class OrderConfigurationValidator
     }
 
     /**
-     * Valida que exista el mapping para la ubicación de bodega
+     * Valida que exista el mapping de bodega requerido.
      *
      * @param array $orderData JSON del pedido
      * @return string|null Mensaje de error o null si es válido
      */
     private function validateWarehouseMapping(array $orderData): ?string
+    {
+        if (!self::USE_FIXED_BARRANQUILLA_WAREHOUSE) {
+            return $this->validateWarehouseMappingFromOrderData($orderData);
+        }
+
+        $mapping = $this->warehouseRepository->findByShopifyLocationId(self::FIXED_BARRANQUILLA_LOCATION_ID);
+
+        if (!$mapping) {
+            return 'Falta configuración de bodega fija BODEGA BARRANQUILLA para location_id: ' . self::FIXED_BARRANQUILLA_LOCATION_ID . '. Configure en Ubicaciones.';
+        }
+
+        return null;
+    }
+
+    private function validateWarehouseMappingFromOrderData(array $orderData): ?string
     {
         $fulfillments = $orderData['fulfillments'] ?? [];
         $locationId = $fulfillments[0]['location_id'] ?? null;

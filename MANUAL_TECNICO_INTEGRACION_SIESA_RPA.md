@@ -112,13 +112,13 @@ Sistema destino que:
 #### `errores/`
 
 - Windows sube aquí los `.P99`
-- Laravel los consume con `php artisan siesa:check-errors`
+- Laravel los consume con `php artisan siesa:process-rpa-results`
 - luego Laravel los elimina de S3
 
 #### `resultados/`
 
 - Windows sube aquí un JSON por corrida
-- Laravel lo consume con `php artisan siesa:check-errors`
+- Laravel lo consume con `php artisan siesa:process-rpa-results`
 - luego Laravel lo elimina de S3
 
 ---
@@ -224,8 +224,17 @@ Responsabilidades:
 - construir el contenido del archivo Siesa
 - leer configuración general
 - resolver método de pago
-- resolver bodega
+- resolver bodega fija de Barranquilla
 - agregar líneas por producto y envío
+
+Configuración vigente de bodega:
+
+- Shopify Location ID: `80414146731`
+- Nombre: `BODEGA BARRANQUILLA`
+- Código bodega Siesa: `001`
+- Código localización Siesa: `17`
+
+Por solicitud operativa, la generación del archivo plano no toma temporalmente la bodega desde `fulfillments.location_id` de Shopify. Todos los pedidos se generan usando esta bodega fija, siempre que exista el mapping en `siesa_warehouse_mappings`.
 
 ### 5.4 Validación previa
 
@@ -237,7 +246,7 @@ Validaciones obligatorias:
 
 - configuración general Siesa
 - mapping de método de pago
-- mapping de bodega/ubicación
+- mapping de la bodega fija de Barranquilla (`80414146731`)
 
 ### 5.5 Consumo del resultado RPA
 
@@ -252,10 +261,27 @@ Responsabilidades:
 - interpretar archivos intentados, exitosos y con error
 - deduplicar archivos reportados por el RPA
 - resolver conflictos por archivo con prioridad `error > unresolved > warning > without_error`
-- actualizar estados de pedidos
+- actualizar estados de pedidos según la evidencia del RPA
 - consumir `.P99` legados si existen
-- guardar advertencias de Siesa en `error_message` cuando el pedido queda `completed` con warning
+- dejar pedidos intentados, exitosos, con advertencia o no resueltos en `rpa_processing` hasta confirmación P97
+- marcar como `siesa_error` los pedidos con error real reportado por Siesa
 - eliminar de S3 los `.PE0`, JSON y `.P99` ya procesados
+
+### 5.6 Confirmación P97
+
+Archivos principales:
+
+- `app/Console/Commands/ReconcileSiesaP97.php`
+- `app/Services/Siesa/SiesaP97Parser.php`
+- `app/Services/Siesa/SiesaP97Reconciler.php`
+
+Responsabilidades:
+
+- leer archivos `.P97` desde `confirmaciones/`
+- confirmar pedidos que aparecen en el reporte P97 de Siesa
+- actualizar pedidos confirmados a `completed`
+- guardar número de pedido Siesa, documento alterno, fecha, estado ERP y archivo de confirmación
+- reabrir a `pending` pedidos dentro del rango del P97 que estaban `completed`, `sent_to_siesa` o `rpa_processing` pero no aparecen en el reporte
 
 ---
 
@@ -267,26 +293,35 @@ Archivo:
 
 ### Tareas programadas
 
-#### `shopify:sync-orders`
+#### `shopify:sync-missing-orders`
 
-- horario: `02:00 AM`
+- horario: `6:15 AM`, `12:15 PM`, `6:15 PM`
 - función: recuperar pedidos faltantes desde Shopify
+
+#### `orders:refresh-shopify-data --non-completed --days=5`
+
+- horario: `6:25 AM`, `12:25 PM`, `6:25 PM`
+- función: actualizar datos frescos desde Shopify para pedidos no completados recientes, sin despachar reprocesos directamente
 
 #### `orders:mark-expired-payments --days=3 --max-days=30`
 
-- horario: `02:30 AM`
+- horario: `6:35 AM`, `12:35 PM`, `6:35 PM`
 - función: refrescar pedidos pendientes antiguos y marcarlos como `payment_expired` cuando Shopify sigue reportando pago no confirmado
 
-#### `orders:refresh --non-completed --days=2 --reprocess`
+#### `orders:dispatch-pending --validate`
 
-- horario: `03:00 AM`
-- función: refrescar pedidos no completados recientes y reprocesar solo `pending` o `failed`
-- exclusión importante: no reprocesa automáticamente pedidos en `siesa_error`
+- horario: `6:45 AM`, `12:45 PM`, `6:45 PM`
+- función: despachar a cola los pedidos `pending` pagados que pasan validación antes de cada ventana del RPA
 
-#### `siesa:check-errors`
+#### `siesa:process-rpa-results`
 
-- horario: cada `30 minutos`
-- función: cerrar resultados que subió el RPA y consumir errores
+- horario: minuto `5` y `35` de cada hora
+- función: procesar resultados JSON del RPA y archivos `.P99`; deja confirmaciones pendientes de P97
+
+#### `siesa:reconcile-p97`
+
+- horario: minuto `10` y `40` de cada hora
+- función: reconciliar confirmaciones P97 y cerrar pedidos como `completed` cuando aparecen en Siesa
 
 ### Requisito operativo
 
@@ -453,18 +488,18 @@ Por cada corrida el bot sube un JSON como este:
 
 ```json
 {
-  "run_id": "20260406_190000",
-  "started_at": "2026-04-06T19:00:01-05:00",
-  "finished_at": "2026-04-06T19:12:33-05:00",
-  "machine_name": "PC-SIESA-01",
-  "files_detected": ["00003663.PE0"],
-  "files_attempted": ["00003663.PE0"],
-  "files_consumed_by_siesa": ["00003663.PE0"],
-  "files_without_error": ["00003663.PE0"],
-  "files_with_warning": [],
-  "files_with_error": [],
-  "files_unresolved": [],
-  "fatal_error": null
+    "run_id": "20260406_190000",
+    "started_at": "2026-04-06T19:00:01-05:00",
+    "finished_at": "2026-04-06T19:12:33-05:00",
+    "machine_name": "PC-SIESA-01",
+    "files_detected": ["00003663.PE0"],
+    "files_attempted": ["00003663.PE0"],
+    "files_consumed_by_siesa": ["00003663.PE0"],
+    "files_without_error": ["00003663.PE0"],
+    "files_with_warning": [],
+    "files_with_error": [],
+    "files_unresolved": [],
+    "fatal_error": null
 }
 ```
 
@@ -472,13 +507,13 @@ Ejemplo con advertencias:
 
 ```json
 {
-  "file": "00065303.PE0",
-  "s3_key": "pedidos/00065303.PE0",
-  "p99_key": "errores/20260424_220609_00065303_UCVE104F.P99",
-  "warnings": [
-    "[001614] ITEM LIQUIDADO CON OTRA LISTA PRECIOKIT REGENERADOR INTENSO"
-  ],
-  "consumed_by_siesa": true
+    "file": "00065303.PE0",
+    "s3_key": "pedidos/00065303.PE0",
+    "p99_key": "errores/20260424_220609_00065303_UCVE104F.P99",
+    "warnings": [
+        "[001614] ITEM LIQUIDADO CON OTRA LISTA PRECIOKIT REGENERADOR INTENSO"
+    ],
+    "consumed_by_siesa": true
 }
 ```
 
@@ -559,12 +594,18 @@ Actualmente:
 
 ### 12.3 Cada 30 minutos en Laravel
 
-`siesa:check-errors`:
+`siesa:process-rpa-results`:
 
 - consume `resultados/`
 - consume `errores/`
-- marca pedidos como `completed`, `siesa_error` o `rpa_processing`
+- marca pedidos como `rpa_processing` o `siesa_error` según el resultado del RPA/P99
 - elimina de S3 los `.PE0` de `pedidos/` reportados como leídos o intentados por el RPA
+
+`siesa:reconcile-p97`:
+
+- consume `confirmaciones/`
+- marca como `completed` los pedidos que aparecen en el P97 de Siesa
+- reabre a `pending` pedidos cubiertos por el P97 que no aparecen en el reporte
 
 ---
 
@@ -573,28 +614,40 @@ Actualmente:
 ### 13.1 Revisar resultados RPA manualmente
 
 ```bash
-php artisan siesa:check-errors
+php artisan siesa:process-rpa-results
 ```
 
-### 13.2 Reprocesar pedidos pendientes en lotes
+### 13.2 Reconciliar confirmaciones P97 manualmente
+
+```bash
+php artisan siesa:reconcile-p97
+```
+
+### 13.3 Despachar pedidos pendientes en lotes
+
+```bash
+php artisan orders:dispatch-pending --limit=50 --validate
+```
+
+### 13.4 Reprocesar pedidos pendientes en lotes
 
 ```bash
 php artisan orders:reprocess --status=pending --limit=50 --validate
 ```
 
-### 13.3 Refrescar pedidos concretos desde Shopify y reencolar
+### 13.5 Refrescar pedidos concretos desde Shopify
 
 ```bash
-php artisan orders:refresh --ids=123 --ids=124 --reprocess
+php artisan orders:refresh-shopify-data --ids=123 --ids=124
 ```
 
-### 13.4 Marcar pagos vencidos manualmente
+### 13.6 Marcar pagos vencidos manualmente
 
 ```bash
 php artisan orders:mark-expired-payments --days=3 --max-days=30
 ```
 
-### 13.5 Revisar Supervisor
+### 13.7 Revisar Supervisor
 
 ```bash
 sudo supervisorctl status
@@ -618,13 +671,13 @@ Revisar:
 
 - que `state.json` exista
 - que no haya sido eliminado o reemplazado
-- que Laravel esté ejecutando `siesa:check-errors` y limpiando `pedidos/` en S3
+- que Laravel esté ejecutando `siesa:process-rpa-results` y limpiando `pedidos/` en S3
 
 ### 14.3 Laravel no cambia estados
 
 Revisar:
 
-- que `siesa:check-errors` esté corriendo
+- que `siesa:process-rpa-results` y `siesa:reconcile-p97` estén corriendo
 - que `resultados/` y `errores/` tengan permisos correctos
 - que el cron de `schedule:run` exista
 

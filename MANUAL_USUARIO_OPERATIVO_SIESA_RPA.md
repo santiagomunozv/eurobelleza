@@ -147,9 +147,10 @@ Si un pedido queda en `Error Siesa`:
 1. entrar al detalle del pedido en el panel
 2. revisar el mensaje de error
 3. corregir lo que corresponda:
+
 - configuración
 - método de pago
-- bodega
+- bodega fija de Barranquilla
 - datos del pedido
 - duplicidad en Siesa
 
@@ -168,6 +169,17 @@ ITEM LIQUIDADO CON OTRA LISTA PRECIO
 ```
 
 Ese tipo de advertencia no necesariamente bloquea el pedido. El criterio principal es que Siesa haya consumido el archivo.
+
+Nota operativa sobre bodega:
+
+Por ahora todos los pedidos se envían a Siesa con la bodega fija de Barranquilla:
+
+- Shopify Location ID: `80414146731`
+- Bodega: `BODEGA BARRANQUILLA`
+- Código bodega: `001`
+- Código localización: `17`
+
+Si aparece un error de bodega, se debe revisar que esa configuración exista en el panel de ubicaciones/bodegas. No depende temporalmente de la bodega que venga asignada en Shopify.
 
 ---
 
@@ -303,6 +315,7 @@ Contactar soporte cuando ocurra cualquiera de estos casos:
 4. El bot carga pedidos en Siesa
 5. El bot valida si Siesa consumió el archivo desde `trm`
 6. El sistema web marca cada pedido como:
+
 - `Completado`
 - o `Error Siesa`
 - o `Procesando en RPA` si no pudo confirmar el resultado
