@@ -14,6 +14,14 @@ class SiesaFlatFileGenerator
     private const USE_FIXED_BARRANQUILLA_WAREHOUSE = true;
     private const FIXED_BARRANQUILLA_LOCATION_ID = 80414146731;
 
+    // Palabras frecuentes en tags de pedidos manuales que no identifican un método de pago
+    // específico (p. ej. "link de pago Addi" no debe matchear por "pago" contra
+    // "Checkout Mercado Pago"). Se excluyen del matching aunque tengan >= 3 caracteres.
+    private const TAG_MATCH_STOPWORDS = [
+        'pago', 'pagos', 'link', 'pedido', 'compra', 'transferencia',
+        'cliente', 'envio', 'entrega', 'factura', 'orden', 'nota',
+    ];
+
     private OrderLogService $orderLogService;
     private SiesaWarehouseMappingRepository $warehouseRepository;
 
@@ -232,8 +240,21 @@ class SiesaFlatFileGenerator
     }
 
     /**
-     * Busca configuración de payment gateway basándose en los tags del pedido
-     * Hace matching case-insensitive con los payment_gateway_name configurados
+     * Busca configuración de payment gateway basándose en los tags del pedido.
+     * Hace matching por palabra EXACTA (no substring) entre las palabras del tag
+     * y las palabras del nombre del gateway configurado, ignorando palabras
+     * "ruido" (ver TAG_MATCH_STOPWORDS) que son demasiado genéricas para
+     * identificar un método de pago por sí solas.
+     *
+     * Si más de un gateway configurado queda como candidato para el mismo
+     * conjunto de tags, se compara el código SIESA (sucursal/condición de
+     * pago/centro de costo) de cada candidato: si todos representan el mismo
+     * código, da igual cuál se use y se toma uno de forma determinística
+     * (p. ej. "Checkout Mercado Pago" vs "Mercado Pago Tarjetas", que hoy
+     * comparten código). Solo si los candidatos representan códigos distintos
+     * se considera ambiguo de verdad: no se adivina, se registra como error y
+     * el pedido queda pendiente de revisión manual, en vez de resolverse con
+     * un método de pago que podría ser incorrecto (con impacto contable en SIESA).
      *
      * @param Order $order Pedido de Shopify
      * @param string $tags Tags del pedido (texto libre)
@@ -248,25 +269,59 @@ class SiesaFlatFileGenerator
             return null;
         }
 
-        // Dividir tags en palabras y buscar con LIKE en la base de datos
-        $words = preg_split('/[\s,]+/', strtolower($tags));
+        $tagWords = collect(preg_split('/[\s,]+/', strtolower($tags)))
+            ->filter(fn (string $word) => strlen($word) >= 3 && !in_array($word, self::TAG_MATCH_STOPWORDS, true))
+            ->unique();
 
-        foreach ($words as $word) {
-            // Ignorar palabras muy cortas (conectores, etc.)
-            if (strlen($word) < 3) {
-                continue;
+        if ($tagWords->isEmpty()) {
+            $this->orderLogService->logError($order, 'payment_gateway_tags_no_usable_words', [
+                'tags' => $tags,
+                'error' => 'Los tags del pedido solo tienen palabras genéricas o muy cortas para identificar el método de pago'
+            ]);
+            return null;
+        }
+
+        $candidates = []; // indexado por mapping id, para deduplicar coincidencias por varias palabras
+        foreach (SiesaPaymentGatewayMapping::all() as $mapping) {
+            $gatewayWords = preg_split('/\s+/', strtolower($mapping->payment_gateway_name));
+
+            if ($tagWords->intersect($gatewayWords)->isNotEmpty()) {
+                $candidates[$mapping->id] = $mapping;
             }
+        }
 
-            $mapping = SiesaPaymentGatewayMapping::whereRaw('LOWER(payment_gateway_name) LIKE ?', ["%{$word}%"])->first();
+        if (count($candidates) === 1) {
+            $mapping = reset($candidates);
+            $this->orderLogService->logInfo($order, 'payment_gateway_found_from_tags', [
+                'tags' => $tags,
+                'matched_gateway' => $mapping->payment_gateway_name
+            ]);
+            return $mapping;
+        }
 
-            if ($mapping) {
+        if (count($candidates) > 1) {
+            $distinctCodes = collect($candidates)
+                ->map(fn ($m) => "{$m->sucursal}|{$m->condicion_pago}|{$m->centro_costo}")
+                ->unique();
+
+            if ($distinctCodes->count() === 1) {
+                // Varios nombres de gateway coinciden con los tags, pero todos
+                // representan el mismo código en SIESA: no hay ambigüedad real.
+                $mapping = collect($candidates)->sortBy('id')->first();
                 $this->orderLogService->logInfo($order, 'payment_gateway_found_from_tags', [
                     'tags' => $tags,
-                    'matched_word' => $word,
-                    'matched_gateway' => $mapping->payment_gateway_name
+                    'matched_gateway' => $mapping->payment_gateway_name,
+                    'equivalent_candidates' => collect($candidates)->pluck('payment_gateway_name')->values()->all(),
                 ]);
                 return $mapping;
             }
+
+            $this->orderLogService->logError($order, 'payment_gateway_ambiguous_match_from_tags', [
+                'tags' => $tags,
+                'candidates' => collect($candidates)->pluck('payment_gateway_name')->values()->all(),
+                'error' => 'Varios métodos de pago configurados (con códigos SIESA distintos) coinciden con los tags del pedido; requiere revisión manual'
+            ]);
+            return null;
         }
 
         $this->orderLogService->logError($order, 'payment_gateway_not_found_in_tags', [

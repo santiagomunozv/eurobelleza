@@ -3,32 +3,57 @@
 ## Índice
 
 1. [Resumen del Sistema](#resumen-del-sistema)
-2. [Maestros y Configuraciones](#maestros-y-configuraciones)
-3. [Flujo de Procesamiento](#flujo-de-procesamiento)
-4. [Jobs y Colas](#jobs-y-colas)
-5. [Comandos Artisan](#comandos-artisan)
-6. [Sistema de Validación](#sistema-de-validación)
-7. [Sincronización Automática](#sincronización-automática)
-8. [Generación de Archivos SIESA](#generación-de-archivos-siesa)
-9. [Logs y Trazabilidad](#logs-y-trazabilidad)
-10. [Casos de Uso Comunes](#casos-de-uso-comunes)
+2. [Estados del Pedido](#estados-del-pedido)
+3. [Maestros y Configuraciones](#maestros-y-configuraciones)
+4. [Flujo de Procesamiento](#flujo-de-procesamiento)
+5. [Jobs y Colas](#jobs-y-colas)
+6. [Comandos Artisan](#comandos-artisan)
+7. [Sistema de Validación](#sistema-de-validación)
+8. [Sincronización Automática](#sincronización-automática)
+9. [Generación de Archivos SIESA](#generación-de-archivos-siesa)
+10. [Logs y Trazabilidad](#logs-y-trazabilidad)
+11. [Casos de Uso Comunes](#casos-de-uso-comunes)
 
 ---
 
 ## Resumen del Sistema
 
-Sistema de integración automática entre Shopify y SIESA 8.5 que procesa pedidos pagados y genera archivos planos (.PE0 y .txt) con el formato requerido por SIESA.
+Sistema de integración automática entre Shopify y SIESA 8.5. Laravel (`eurobelleza`) procesa pedidos pagados, genera un archivo plano `.PE0` con el formato requerido por SIESA y lo publica en Amazon S3. Un bot Windows (`eurobelleza_rpa`) lee ese archivo desde S3, lo carga en SIESA 8.5 mediante automatización de escritorio y reporta el resultado de vuelta a S3. Laravel consume ese resultado y, más tarde, concilia el reporte oficial `.P97` que el mismo bot genera en SIESA para confirmar de forma definitiva qué pedidos quedaron creados.
+
+Este documento cubre en detalle los maestros, el formato de archivo y la lógica de validación del lado Laravel. Para el flujo end-to-end completo (incluyendo el bot RPA, S3 y la conciliación P97) ver `MANUAL_TECNICO_INTEGRACION_SIESA_RPA.md`; para la operación diaria orientada a usuario final ver `MANUAL_USUARIO_OPERATIVO_SIESA_RPA.md`.
 
 ### Características Principales
 
-- 🔄 Recepción de webhooks de Shopify (orders/paid)
-- ✅ Validación de configuraciones antes de procesar
+- 🔄 Recepción del webhook de Shopify `orders/create`, con chequeo interno de `financial_status`
+- ✅ Validación de configuraciones antes de procesar (configuración general, pasarela de pago, bodega)
 - 📦 Sistema de colas para procesamiento asíncrono
-- 🗺️ Mapeo de bodegas basado en ubicaciones de Shopify
+- 🏭 Bodega fija de Barranquilla para todos los pedidos (temporalmente, ver sección de validación)
 - 💳 Mapeo de pasarelas de pago
-- 📄 Generación de archivos planos SIESA 8.5
-- 🔄 Sincronización diaria automática
-- 📊 Sistema de logs completo
+- 📄 Generación de un archivo plano SIESA 8.5 por pedido (`.PE0`, un registro de 543 caracteres por línea)
+- ☁️ Publicación del `.PE0` en S3 para que el bot RPA lo procese
+- 🤖 Carga automática en SIESA 8.5 vía bot RPA (Windows + `pyautogui`)
+- 📋 Conciliación final contra el reporte `.P97` de SIESA
+- 🔄 Sincronización periódica automática de pedidos faltantes o desactualizados
+- 📊 Sistema de logs completo (`order_logs`)
+
+---
+
+## Estados del Pedido
+
+Definidos en `app/Enums/OrderStatusEnum.php` y usados como cast del campo `status` en `app/Models/Order.php`:
+
+| Estado | Significado |
+|---|---|
+| `pending` | Recibido, esperando pago, configuración válida, o reabierto para reproceso |
+| `processing` | Laravel está generando el archivo internamente |
+| `sent_to_siesa` | `.PE0` generado y subido a S3, esperando que el bot RPA lo tome |
+| `rpa_processing` | El bot RPA ya tomó el archivo (con o sin éxito, con o sin advertencias); esperando confirmación por P97 |
+| `completed` | Confirmado por el reporte `.P97` de SIESA (`siesa:reconcile-p97`) — única forma de llegar a este estado |
+| `failed` | Falló la generación/subida del archivo en Laravel, antes de llegar al RPA |
+| `siesa_error` | SIESA rechazó el pedido con un error real (no una simple advertencia) |
+| `payment_expired` | Shopify sigue reportando el pago sin confirmar tras el período de revisión configurado |
+
+Detalle completo de cada estado y de las transiciones entre ellos: ver `MANUAL_TECNICO_INTEGRACION_SIESA_RPA.md`, sección 4.
 
 ---
 
@@ -166,15 +191,15 @@ $mapping = $this->warehouseRepository->findByShopifyLocationId(80414146731);
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    SHOPIFY (Order Paid)                         │
+│              SHOPIFY (webhook orders/create)                     │
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│           Webhook Controller (orders/paid)                       │
+│           Webhook Controller (orders/create)                     │
 │  - Valida firma HMAC                                            │
-│  - Extrae financial_status                                      │
-│  - Guarda/actualiza en tabla orders                             │
+│  - Crea/actualiza el pedido en tabla orders, status = PENDING   │
+│  - Lee financial_status del payload                              │
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
@@ -209,15 +234,45 @@ $mapping = $this->warehouseRepository->findByShopifyLocationId(80414146731);
                                                 │
                                                 ▼
                                        ┌─────────────────┐
-                                       │ Generar Archivos│
-                                       │ .PE0 + .txt     │
+                                       │ Generar .PE0     │
+                                       │ + subir a S3      │
+                                       │ (pedidos/)         │
                                        └────────┬────────┘
                                                 │
                                                 ▼
-                                       [ORDEN COMPLETED]
-                                       + Log success
-                                       + Archivos en storage
+                                       [ORDEN SENT_TO_SIESA]
+                                                │
+                                                ▼
+                              ┌─────────────────────────────────┐
+                              │ Bot RPA (Windows) descarga,       │
+                              │ importa en SIESA 8.5 y sube el     │
+                              │ resultado de la corrida a S3       │
+                              │ (resultados/, errores/)             │
+                              └────────────────┬────────────────┘
+                                               │
+                                               ▼
+                    php artisan siesa:process-rpa-results (cada 30 min)
+                                               │
+                              ┌────────────────┴────────────────┐
+                              │ SIESA_ERROR                        │ RPA_PROCESSING
+                              ▼                                    (sin error, con
+                    (requiere corrección                            advertencia o
+                     y reproceso manual)                            no resuelto)
+                                                                         │
+                                                                         ▼
+                                                     Bot RPA genera y sube el
+                                                     reporte .P97 (confirmaciones/)
+                                                                         │
+                                                                         ▼
+                                          php artisan siesa:reconcile-p97 (cada 30 min)
+                                                                         │
+                                                                         ▼
+                                                              [ORDEN COMPLETED]
+                                                      (o vuelve a PENDING si el pedido
+                                                       no aparece en el P97 del rango)
 ```
+
+Nota importante: `siesa:process-rpa-results` nunca deja un pedido en `completed` por sí solo. La única confirmación final de que el pedido quedó creado en SIESA es el reporte `.P97`, conciliado por `siesa:reconcile-p97`.
 
 ### Flujo Detallado por Etapas
 
@@ -225,37 +280,41 @@ $mapping = $this->warehouseRepository->findByShopifyLocationId(80414146731);
 
 **Archivo:** `app/Http/Controllers/API/ShopifyWebhookController.php`
 
-```php
-public function handleOrderPaid(Request $request)
-{
-    // 1. Validar firma HMAC
-    if (!$this->validateHmac($request)) {
-        return response()->json(['error' => 'Invalid HMAC'], 401);
-    }
+**Ruta:** `POST /api/webhooks/shopify/orders/create` (`routes/api.php`), topic de Shopify `orders/create` — no existe un webhook separado para `orders/paid`; el pago se evalúa dentro del propio controlador.
 
-    // 2. Guardar/actualizar en DB
+Flujo real (simplificado, con nombres de método ilustrativos):
+
+```php
+public function ordersCreate(Request $request)
+{
+    // 1. Validar firma HMAC (middleware shopify.webhook)
+
+    // 2. Crear o actualizar el pedido, siempre en PENDING al inicio
     $order = Order::updateOrCreate(
         ['shopify_order_id' => $orderData['id']],
         [
-            'order_number' => $orderData['order_number'],
-            'financial_status' => $orderData['financial_status'],
+            'shopify_order_number' => $orderData['order_number'],
             'order_json' => $orderData,
-            'status' => 'pending'
+            'status' => OrderStatusEnum::PENDING,
         ]
     );
 
-    // 3. Si está pagado, validar configuración
-    if ($financialStatus === 'paid') {
+    // 3. Solo si ya está pagado se valida y se encola
+    if (($orderData['financial_status'] ?? null) === 'paid') {
         $validation = $this->configValidator->validate($orderData);
 
         if ($validation['valid']) {
-            // ✅ Encolar job
             ProcessShopifyOrder::dispatch($order);
-        } else {
-            // ❌ Guardar errores sin encolar
+        } elseif (!$this->shouldKeepPending($validation['errors'])) {
+            // errores reales de configuración -> se registran, el pedido queda pending
             $this->orderLogService->logError($order, 'configuration_validation_failed', $validation['errors']);
         }
+        // si el único problema es falta de fulfillment/location_id, el pedido se
+        // deja en pending a propósito para reintentarlo cuando llegue ese dato
     }
+
+    // si no está pagado, el pedido simplemente queda en PENDING y será tomado
+    // más tarde por shopify:sync-missing-orders / orders:dispatch-pending
 }
 ```
 
@@ -269,44 +328,32 @@ public function handleOrderPaid(Request $request)
 public function validate(array $orderData): array
 {
     $errors = [];
-    $details = [];
 
-    // ✅ 1. Configuración General
-    $generalConfig = $this->generalConfigRepo->getActiveConfiguration();
-    if (!$generalConfig) {
+    // 1. Configuración General
+    if (!SiesaGeneralConfiguration::getConfig()) {
         $errors[] = 'No existe configuración general activa';
     }
 
-    // ✅ 2. Mapeo de Pasarela de Pago
+    // 2. Mapeo de Pasarela de Pago (o de tags, si el gateway es "manual")
     $gateway = $orderData['payment_gateway_names'][0] ?? null;
-    $paymentMapping = $this->paymentGatewayRepo->findByShopifyGateway($gateway);
-    if (!$paymentMapping) {
+    if (!$this->resolvePaymentGatewayMapping($gateway, $orderData['tags'] ?? '')) {
         $errors[] = "No existe mapeo para la pasarela: {$gateway}";
     }
 
-    // ✅ 3. Mapeo de Bodega
-    $fulfillments = $orderData['fulfillments'] ?? [];
-    if (empty($fulfillments)) {
-        $errors[] = 'El pedido no tiene información de fulfillments';
-    } else {
-        $locationId = $fulfillments[0]['location_id'] ?? null;
-        if (!$locationId) {
-            $errors[] = 'El fulfillment no tiene location_id';
-        } else {
-            $warehouseMapping = $this->warehouseMappingRepo->findByShopifyLocationId($locationId);
-            if (!$warehouseMapping) {
-                $errors[] = "No existe mapeo para la ubicación: {$locationId}";
-            }
-        }
+    // 3. Mapeo de Bodega — actualmente FIJO a Barranquilla, no depende del
+    //    fulfillment del pedido (ver USE_FIXED_BARRANQUILLA_WAREHOUSE más abajo)
+    if (!$this->warehouseMappingRepo->findByShopifyLocationId(80414146731)) {
+        $errors[] = 'No existe configuración de bodega fija para BODEGA BARRANQUILLA (location_id: 80414146731)';
     }
 
     return [
         'valid' => empty($errors),
         'errors' => $errors,
-        'details' => $details
     ];
 }
 ```
+
+> La lógica para resolver la bodega dinámicamente por `fulfillments[0].location_id` sigue existiendo en el código (`OrderConfigurationValidator` y `SiesaFlatFileGenerator` conservan los métodos), pero está deshabilitada por una constante interna (`USE_FIXED_BARRANQUILLA_WAREHOUSE = true`, sin toggle por variable de entorno). Mientras esa constante sea `true`, el `location_id` real del pedido nunca se lee para elegir bodega.
 
 #### 3️⃣ Job de Procesamiento
 
@@ -317,69 +364,79 @@ class ProcessShopifyOrder implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public $tries = 3;           // 3 intentos
-    public $backoff = 60;        // 60 segundos entre reintentos
-    public $timeout = 300;       // 5 minutos de timeout
+    public int $tries = 3;      // 3 intentos
+    public int $backoff = 60;   // 60 segundos entre reintentos
+    public int $timeout = 120;  // 2 minutos de timeout
 
-    public function handle(
-        SiesaFlatFileGenerator $generator,
-        OrderLogService $logService
-    ): void {
+    public function handle(): void
+    {
         try {
-            // 1. Generar archivos
-            $result = $generator->generateFromOrder($this->order);
-
-            // 2. Actualizar estado
-            $this->order->update(['status' => 'completed']);
-
-            // 3. Log de éxito
-            $logService->logSuccess($this->order, 'order_processed', 'Pedido procesado exitosamente');
-
+            ShopifyOrderProcessor::process($this->order);
         } catch (\Exception $e) {
-            // Log de error
-            $logService->logError($this->order, 'processing_failed', $e->getMessage());
-            throw $e; // Re-lanzar para activar reintentos
+            Log::error(...);
+            if ($this->attempts() >= $this->tries) {
+                Log::critical(...);
+            }
+            throw $e; // re-lanza para activar reintentos
         }
+    }
+
+    public function failed(\Throwable $e): void
+    {
+        Log::critical(...); // se ejecuta tras agotar los 3 intentos
     }
 }
 ```
 
-#### 4️⃣ Generación de Archivos
+El job delega todo el trabajo en `ShopifyOrderProcessor::process()` — no llama directamente a `SiesaFlatFileGenerator`.
 
-**Archivo:** `app/Services/Siesa/SiesaFlatFileGenerator.php`
+#### 4️⃣ Generación y Publicación del Archivo
+
+**Archivos:** `app/Services/ShopifyOrderProcessor.php` (orquesta) y `app/Services/Siesa/SiesaFlatFileGenerator.php` (genera el contenido).
 
 ```php
-public function generateFromOrder(Order $order): array
+// ShopifyOrderProcessor::process($order) — flujo real, simplificado
+public function process(Order $order): bool
 {
-    $orderData = $order->order_json;
+    if ($order->status !== OrderStatusEnum::PENDING) {
+        return false;
+    }
+    if (($order->order_json['financial_status'] ?? null) !== 'paid') {
+        return false;
+    }
 
-    // 1. Obtener configuración general
-    $generalConfig = $this->generalConfigRepo->getActiveConfiguration();
+    $order->update(['status' => OrderStatusEnum::PROCESSING]);
 
-    // 2. Obtener forma de pago
-    $gateway = $orderData['payment_gateway_names'][0] ?? null;
-    $paymentMapping = $this->paymentGatewayRepo->findByShopifyGateway($gateway);
+    try {
+        // 1. Generar el CONTENIDO del archivo (una sola cadena, 543 chars por línea)
+        $content = $this->generator->generate($order); // SiesaFlatFileGenerator::generate()
 
-    // 3. Obtener bodega y ubicación
-    $warehouseMapping = $this->validateAndGetWarehouseMapping($orderData);
+        // 2. Guardar copia local (histórico), con carpeta por fecha
+        $orderNumber = str_pad($order->shopify_order_number, 8, '0', STR_PAD_LEFT);
+        $dateFolder = now()->format('Ymd');
+        Storage::disk('local')->put("siesa/pedidos/{$dateFolder}/{$orderNumber}.PE0", $content);
+        Storage::disk('local')->put("siesa/pedidos/{$dateFolder}/{$orderNumber}.txt", $content); // copia local duplicada, mismo contenido
 
-    // 4. Generar contenido de archivos
-    $pe0Content = $this->generatePE0Content($orderData, $generalConfig, $paymentMapping, $warehouseMapping);
-    $txtContent = $this->generateTXTContent($orderData, $generalConfig, $paymentMapping, $warehouseMapping);
+        // 3. Subir SOLO el .PE0 a S3, en estructura plana (sin carpeta de fecha)
+        //    El histórico por fecha vive solo en local; S3 es únicamente canal
+        //    de transferencia hacia el bot RPA.
+        Storage::disk('siesa_pedidos')->put("{$orderNumber}.PE0", $content); // -> s3://.../pedidos/{orderNumber}.PE0
 
-    // 5. Guardar archivos
-    $dateFolder = now()->format('Ymd');
-    $fileName = str_pad($orderData['order_number'], 8, '0', STR_PAD_LEFT);
-
-    Storage::disk('local')->put("siesa/pedidos/{$dateFolder}/{$fileName}.PE0", $pe0Content);
-    Storage::disk('local')->put("siesa/pedidos/{$dateFolder}/{$fileName}.txt", $txtContent);
-
-    return [
-        'pe0_file' => "{$dateFolder}/{$fileName}.PE0",
-        'txt_file' => "{$dateFolder}/{$fileName}.txt"
-    ];
+        $order->update(['status' => OrderStatusEnum::SENT_TO_SIESA]);
+        return true;
+    } catch (\Exception $e) {
+        $order->increment('attempts');
+        $order->update(['status' => OrderStatusEnum::FAILED]);
+        throw $e;
+    }
 }
 ```
+
+Puntos a tener en cuenta:
+
+- `SiesaFlatFileGenerator::generate()` devuelve **un solo string** con todas las líneas del pedido (una por ítem, más una línea de envío si aplica) — no arma por separado un "encabezado" y un "detalle".
+- El disco local sigue escribiendo tanto `.PE0` como `.txt` con el **mismo contenido**, pero a **S3 solo sube el `.PE0`**. El `.txt` es una copia local histórica sin más uso funcional.
+- El pedido no queda `completed` aquí: queda en `sent_to_siesa`, esperando que el bot RPA lo tome, y más adelante la conciliación P97.
 
 ---
 
@@ -775,60 +832,72 @@ public function updatePendingOrders(): void
 
 ### Formato de Archivos
 
-**Formato:** SIESA 8.5 - Archivos de texto plano con ancho fijo (543 caracteres por línea)
+**Formato:** SIESA 8.5 - Archivo de texto plano con ancho fijo, **543 caracteres por línea**. Cada línea es un registro completo (no hay una línea de "encabezado" separada de las líneas de "detalle": el pedido, el cliente, la bodega, etc. se repiten en cada línea de ítem).
 
-**Archivos generados por pedido:**
+**Archivos generados por pedido** (`app/Services/ShopifyOrderProcessor.php`):
 
-1. **{numero_pedido}.PE0** - Encabezado del pedido
-2. **{numero_pedido}.txt** - Listado de ítems
+1. **`{numero_pedido}.PE0`** — el único que se sube a S3 (`pedidos/{numero_pedido}.PE0`) para que el bot RPA lo importe en SIESA.
+2. **`{numero_pedido}.txt`** — copia local con **exactamente el mismo contenido** que el `.PE0`, guardada solo como histórico local; no se sube a S3 ni cumple una función distinta.
 
-**Ejemplo:** Pedido #62394 genera:
+**Líneas por pedido:** una línea de 543 caracteres por cada `line_item` del pedido, más una línea adicional de envío (SKU fijo `900010`) si `total_shipping_price_set.shop_money.amount > 0`. Los ítems con precio final de línea igual a cero (después de descuentos) se tratan como **obsequio** y usan la lista de precio y el motivo de obsequio configurados.
 
-- `00062394.PE0` (543 bytes)
-- `00062394.txt` (543 bytes × cantidad de ítems)
+**Ejemplo:** Pedido #62394 con 2 ítems y envío genera `00062394.PE0` (y su copia `00062394.txt`) con **3 líneas** de 543 caracteres cada una.
 
-### Estructura del Archivo .PE0
+### Estructura de cada línea (543 caracteres)
 
-**Línea encabezado (543 caracteres):**
-
-```
-Posiciones | Longitud | Campo              | Ejemplo
------------|----------|--------------------|---------
-1-3        | 3        | Tipo registro      | 310
-4-6        | 3        | Bodega             | 001
-7-8        | 2        | Sucursal           | 01
-9-28       | 20       | Comprobante        | 1PE
-29-48      | 20       | Documento          | 00062394
-49-54      | 6        | Fecha (AAMMDD)     | 170225
-55-57      | 3        | Bodega destino     | 001
-58-59      | 2        | Ubicación destino  | 15
-60-79      | 20       | Tercero            | 890100222
-80-99      | 20       | Vendedor           | 900
-100-102    | 3        | Moneda             | COP
-103-122    | 20       | Clase venta        | 1
-... (hasta 543)
-```
-
-### Estructura del Archivo .txt
-
-**Múltiples líneas (una por ítem, 543 caracteres cada una):**
+Definida en `app/Helpers/SiesaFileStructure.php` y usada por `SiesaFlatFileGenerator::generateLine()`:
 
 ```
-Posiciones | Longitud | Campo              | Ejemplo
------------|----------|--------------------|---------
-1-3        | 3        | Tipo registro      | 341
-4-6        | 3        | Bodega             | 001
-7-8        | 2        | Sucursal           | 01
-9-28       | 20       | Comprobante        | 1PE
-29-48      | 20       | Documento          | 00062394
-49-54      | 6        | Fecha (AAMMDD)     | 170225
-55-73      | 19       | Código producto    | PROD-123
-74-78      | 5        | Cantidad (entero)  | 00002
-79-96      | 18       | Precio unitario    | 0000000000050000.00
-... (hasta 543)
+Posiciones | Long. | Campo                          | Relleno/formato
+-----------|-------|--------------------------------|------------------------------
+1-10       | 10    | Orden de compra (nro. pedido)  | ceros a la izquierda
+11         | 1     | Tipo de identificación cliente | config.tipo_cliente
+12-31      | 20    | Código EAN                     | vacío
+32-44      | 13    | Código del cliente             | config.codigo_cliente
+45-46      | 2     | Sucursal                       | del mapeo de pasarela de pago
+47-54      | 8     | Fecha del pedido (AAAAMMDD)    | order_json.created_at
+55-57      | 3     | Bodega                         | mapeo de bodega (fija Barranquilla: 001)
+58-59      | 2     | Localización                   | mapeo de bodega (fija Barranquilla: 17)
+60         | 1     | Tipo de búsqueda del ítem      | config.tipo_busqueda_item
+61-75      | 15    | Código de barras               | vacío
+76-90      | 15    | Código del ítem (SKU)          | line_item.sku
+91-93      | 3     | Extensión del ítem             | vacío
+94-101     | 8     | Fecha de entrega (AAAAMMDD)    | igual a fecha del pedido
+102-104    | 3     | Unidad de captura              | config.unidad_captura
+105-117    | 13    | Cantidad                       | 9 enteros + 3 decimales + signo
+118-130    | 13    | Cantidad unidad 2              | ceros
+131        | 1     | Unidad del precio              | config.unidad_precio
+132-134    | 3     | Lista de precio                | normal / flete / obsequio según línea
+135-136    | 2     | Lista de descuento             | vacío
+137-148    | 12    | Precio unitario final          | 9 enteros + 2 decimales + signo
+149-152    | 4     | Descuento línea 1               | 0 (el descuento ya se aplicó al precio)
+153-156    | 4     | Descuento línea 2               | 0
+157-176    | 20    | Detalle del movimiento          | config.detalle_movimiento
+177-216    | 40    | Descripción del ítem            | vacío
+217-220    | 4     | Punto de envío                  | vacío
+221-280    | 60    | Observación 1                   | nombre, cédula/NIT, teléfono del shipping_address
+281-340    | 60    | Observación 2                   | dirección, ciudad/departamento
+341-380    | 40    | Descripción variable 1          | vacío
+381-420    | 40    | Descripción variable 2          | vacío
+421-460    | 40    | Descripción variable 3          | vacío
+461-500    | 40    | Descripción variable 4          | vacío
+501-513    | 13    | Código vendedor                 | config.codigo_vendedor
+514-515    | 2     | Motivo                          | motivo normal u obsequio
+516-523    | 8     | Centro de costo                 | del mapeo de pasarela de pago
+524-533    | 10    | Proyecto                        | vacío
+534-535    | 2     | Condición de pago               | del mapeo de pasarela de pago
+536-543    | 8     | Documento alterno               | mismo número de pedido, ceros a la izquierda
 ```
+
+Notas de formato:
+
+- Cantidades y precios llevan signo (`+`/`-`) al final, no al inicio: p.ej. `formatPrice(48000.00)` → `"00000480000+"` (11 dígitos + signo = 12 caracteres).
+- Las observaciones 1 y 2 se generan a partir de `shipping_address`, sin tildes (se convierten a ASCII con `removeAccents()`) y truncadas/rellenadas a 60 caracteres exactos.
+- El descuento por línea (`discount_allocations`) ya se resta dentro del precio unitario final (posiciones 137-148); los campos de porcentaje de descuento (149-156) siempre van en cero.
 
 ### Ubicación de Archivos
+
+**Copia local (histórico, con carpeta por fecha):**
 
 ```
 storage/app/siesa/pedidos/
@@ -837,13 +906,18 @@ storage/app/siesa/pedidos/
 │   ├── 00062394.txt
 │   ├── 00062395.PE0
 │   └── 00062395.txt
-├── 20260307/
-│   └── ...
-└── 20260227/
-    └── ...
+└── ...
 ```
 
-**Patrón:** `storage/app/siesa/pedidos/{AAAAMMDD}/{numero_pedido}.{extension}`
+**Patrón local:** `storage/app/siesa/pedidos/{AAAAMMDD}/{numero_pedido}.{PE0|txt}`
+
+**S3 (canal de transferencia hacia el bot RPA, estructura plana sin carpeta de fecha):**
+
+```
+s3://eurobelleza-siesa/pedidos/00062394.PE0
+```
+
+**Patrón S3:** `pedidos/{numero_pedido}.PE0` (disco `siesa_pedidos`, con `root => 'pedidos'` en `config/filesystems.php`). Laravel elimina este objeto de S3 una vez que `siesa:process-rpa-results` recibe evidencia de que el bot RPA intentó ese archivo (con éxito, advertencia, error o resultado no resuelto).
 
 ---
 
@@ -929,23 +1003,27 @@ docker exec eurobelleza-back php artisan tinker
 **Flujo:**
 
 ```
-1. Shopify envía webhook → orders/paid
+1. Shopify envía webhook → orders/create
 2. Sistema valida HMAC ✅
 3. Crea registro en tabla orders (status: pending)
-4. Detecta financial_status = 'paid'
+4. Detecta financial_status = 'paid' en el mismo payload
 5. Valida configuración:
    ✅ Configuración general existe
    ✅ Pasarela 'bogota' mapeada → forma_pago: '12'
-    ✅ Bodega fija BARRANQUILLA configurada → location_id 80414146731 → bodega: '001', ubicación: '17'
+   ✅ Bodega fija BARRANQUILLA configurada → location_id 80414146731 → bodega: '001', ubicación: '17'
 6. Validación exitosa → Encola ProcessShopifyOrder job
-7. Worker procesa job:
-   - Genera 00062394.PE0
-   - Genera 00062394.txt
-    - Actualiza status → sent_to_siesa
+7. Worker procesa job (ShopifyOrderProcessor):
+   - Genera el contenido del .PE0 (SiesaFlatFileGenerator::generate())
+   - Guarda copia local 00062394.PE0 y 00062394.txt
+   - Sube 00062394.PE0 a s3://eurobelleza-siesa/pedidos/
+   - Actualiza status → sent_to_siesa
    - Registra log de éxito
+8. El bot RPA toma el archivo en la siguiente corrida, lo importa en SIESA,
+   y sube el resultado → status → rpa_processing
+9. La siguiente conciliación P97 confirma el pedido → status → completed
 ```
 
-**Resultado:** Archivos disponibles en `storage/app/siesa/pedidos/20260308/`
+**Resultado:** Archivos disponibles en `storage/app/siesa/pedidos/20260308/` (local) y, mientras esté pendiente de procesar por el RPA, en `s3://eurobelleza-siesa/pedidos/00062394.PE0`.
 
 ---
 
@@ -1112,10 +1190,12 @@ docker exec eurobelleza-back php artisan orders:dispatch-pending --validate
 
 ```bash
 # Shopify Admin → Settings → Notifications → Webhooks
-URL: https://tu-dominio.com/api/shopify/webhooks/orders/paid
+URL: https://tu-dominio.com/api/webhooks/shopify/orders/create
 Formato: JSON
-Evento: Order payment → Order paid
+Evento: Order creation → Order create
 ```
+
+No se usa el evento "Order payment"; el pago se evalúa dentro del controlador a partir de `financial_status` en el mismo payload de `orders/create`.
 
 ### ✅ 5. Configurar Cron para Sync
 
@@ -1215,10 +1295,13 @@ docker exec eurobelleza-back ls -la storage/app/siesa/pedidos/
 # 2. Ver errores en log
 docker exec eurobelleza-back tail -f storage/logs/laravel.log
 
-# 3. Probar generación manual
+# 3. Probar generación manual (contenido del archivo, sin guardar ni subir)
 docker exec eurobelleza-back php artisan tinker
 > $order = Order::find(6);
-> app(SiesaFlatFileGenerator::class)->generateFromOrder($order);
+> app(\App\Services\Siesa\SiesaFlatFileGenerator::class)->generate($order);
+
+# 4. Probar el flujo completo (genera, guarda local y sube a S3)
+> app(\App\Services\ShopifyOrderProcessor::class)->process($order);
 ```
 
 **Soluciones:**
@@ -1229,6 +1312,9 @@ docker exec eurobelleza-back chmod -R 775 storage/app/siesa/
 
 # Crear directorios si no existen
 docker exec eurobelleza-back mkdir -p storage/app/siesa/pedidos/
+
+# Si el archivo se genera y guarda local pero no aparece en pedidos/ de S3,
+# revisar credenciales/permisos del disco `siesa_pedidos` (config/filesystems.php)
 ```
 
 ---
@@ -1308,6 +1394,6 @@ Para dudas o problemas técnicos, revisar:
 
 ---
 
-**Fecha de actualización:** 8 de marzo de 2026  
-**Versión:** 1.0.0  
+**Fecha de actualización:** 13 de septiembre de 2026  
+**Versión:** 2.0.0 — actualizado para reflejar la integración con S3, el bot RPA (`eurobelleza_rpa`) y la conciliación P97; ver también `MANUAL_TECNICO_INTEGRACION_SIESA_RPA.md` y `MANUAL_USUARIO_OPERATIVO_SIESA_RPA.md`  
 **Sistema:** Laravel 11.48.0 + SIESA 8.5

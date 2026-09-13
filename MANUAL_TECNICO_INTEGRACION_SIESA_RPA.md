@@ -50,6 +50,7 @@ Responsabilidades principales:
 - validar si Siesa consumió el `.PE0` desde `trm`
 - detectar archivos `.P99`
 - subir errores a `errores/`
+- generar el reporte `.P97` de confirmación (últimos 15 días) y subirlo a `confirmaciones/`
 - generar un JSON de corrida y subirlo a `resultados/`
 
 Tecnología base:
@@ -71,6 +72,7 @@ Prefijos utilizados:
 - `pedidos/`
 - `errores/`
 - `resultados/`
+- `confirmaciones/`
 
 ### 2.4 Siesa 8.5
 
@@ -121,6 +123,12 @@ Sistema destino que:
 - Laravel lo consume con `php artisan siesa:process-rpa-results`
 - luego Laravel lo elimina de S3
 
+#### `confirmaciones/`
+
+- Windows genera el reporte `.P97` de Siesa (últimos 15 días, vía automatización de teclado) y lo sube aquí al final de cada corrida, tenga o no pedidos pendientes
+- Laravel lo consume con `php artisan siesa:reconcile-p97`
+- luego Laravel lo elimina de S3 (con `siesa_bucket` como disco de respaldo sobre la misma ruta si falla el borrado)
+
 ---
 
 ## 4. Estados del pedido
@@ -156,13 +164,11 @@ El `.PE0` ya fue generado y subido a S3, pero todavía no ha sido resuelto por e
 
 #### `rpa_processing`
 
-Laravel ya recibió evidencia de que el archivo fue tomado en una corrida RPA.
+Laravel ya recibió evidencia de que el archivo fue tomado en una corrida RPA. Este es el estado que queda tanto si el RPA reportó el pedido sin novedad (`files_without_error`) como si lo reportó consumido con advertencias (`files_with_warning`, guardadas en `error_message`) o como no resuelto (`files_unresolved`). `siesa:process-rpa-results` **nunca** mueve un pedido directamente a `completed`; el paso de resultados del RPA solo deja evidencia de intento, la confirmación definitiva la da el P97.
 
 #### `completed`
 
-El pedido fue reportado por el RPA como consumido por Siesa desde `trm`.
-
-Si Siesa consumió el `.PE0` pero generó advertencias, el pedido también queda `completed`, y las advertencias se guardan en `error_message` para trazabilidad.
+El pedido aparece confirmado en el reporte `.P97` que Siesa genera y que `siesa:reconcile-p97` concilia contra la base de datos. Solo esta conciliación mueve pedidos a `completed`; guarda además el número de pedido Siesa, documento alterno, fecha y estado ERP para trazabilidad. Si el pedido tenía una advertencia del RPA en `error_message`, queda registrada mientras el pedido pasa por `rpa_processing`, pero el cambio a `completed` depende del P97, no de la advertencia en sí.
 
 #### `failed`
 
@@ -283,6 +289,13 @@ Responsabilidades:
 - guardar número de pedido Siesa, documento alterno, fecha, estado ERP y archivo de confirmación
 - reabrir a `pending` pedidos dentro del rango del P97 que estaban `completed`, `sent_to_siesa` o `rpa_processing` pero no aparecen en el reporte
 
+El emparejamiento se hace por `documento_alterno` (el número de pedido de Shopify sin ceros a la izquierda), no por el número de pedido interno de Siesa que también trae el `.P97`.
+
+Opciones del comando `siesa:reconcile-p97`:
+
+- `--dry-run`: simula sin actualizar pedidos ni borrar el archivo de S3
+- `--file=`: procesa un archivo específico dentro de `confirmaciones/` en vez de listar todos los `.P97` pendientes
+
 ---
 
 ## 6. Programación automática en Laravel
@@ -380,6 +393,7 @@ Permisos requeridos para Laravel:
 - `GetObject`, `DeleteObject` sobre `pedidos/*`
 - `GetObject`, `DeleteObject` sobre `errores/*`
 - `GetObject`, `DeleteObject` sobre `resultados/*`
+- `GetObject`, `DeleteObject` sobre `confirmaciones/*`
 - `ListBucket` sobre el bucket
 
 ---
@@ -400,8 +414,9 @@ Variables más importantes:
 
 - `SIESA_SHORTCUT_PATH`
 - `SIESA_WORKING_DIR`
-- `SIESA_PEDIDOS_PATH`
-- `SIESA_P99_PATH`
+- `SIESA_PEDIDOS_PATH` (carpeta `trm`)
+- `SIESA_P99_PATH` (carpeta `prt`)
+- `SIESA_P97_PATH` (misma carpeta `prt`, usada para el reporte de confirmación)
 - `SIESA_WINDOW_TITLE`
 - `SIESA_USER`
 - `SIESA_PASSWORD`
@@ -414,6 +429,10 @@ Variables más importantes:
 - `S3_PEDIDOS_PREFIX`
 - `S3_ERRORES_PREFIX`
 - `S3_RESULTADOS_PREFIX`
+- `S3_CONFIRMACIONES_PREFIX`
+- `P97_REPORT_ENABLED`, `P97_GENERATE_WITHOUT_ORDERS`, `P97_LOOKBACK_DAYS`, `P97_REPORT_FILE_NAME` y las secuencias de teclado `P97_MENU_SEQUENCE`/`P97_REPORT_SEQUENCE`
+
+Todas las credenciales (AWS y Siesa) y rutas están escritas en texto plano dentro de `config.py`, que además queda empaquetado dentro del ejecutable (`Bot.spec` lo incluye como `datas`). No hay variables de entorno ni gestor de secretos: cualquier cambio de credenciales o rutas requiere editar `config.py` y re-empaquetar con PyInstaller.
 
 ### 9.3 Función del `BOT_WORKDIR`
 
@@ -452,20 +471,27 @@ Comportamiento:
 1. valida rutas locales y de Siesa
 2. adquiere lock
 3. consulta `pedidos/` en S3
-4. filtra objetos ya procesados según `state.json`
+4. filtra objetos ya procesados según `state.json` (compara ETag/tamaño/fecha de modificación del objeto, no solo el nombre; un mismo key re-subido con contenido distinto se vuelve a procesar)
 5. descarga nuevos `.PE0` a `downloads`
-6. abre Siesa
-7. inicia sesión
-8. navega por teclado hasta el menú de importación
-9. procesa archivo por archivo
-10. valida si Siesa consumió el `.PE0` desde `trm`
-11. detecta `.P99` nuevos o modificados
-12. sube `.P99` a `errores/`
-13. clasifica el resultado con base en consumo de `trm` y contenido del `.P99`
-14. limpia el `.PE0` local de `trm` si Siesa no lo consumió
-15. registra resultado de corrida
-16. sube JSON a `resultados/`
-17. cierra Siesa
+6. si no hay archivos nuevos: genera igualmente el `.P97` (si `P97_GENERATE_WITHOUT_ORDERS` está activo) y sube el resultado; si hay archivos nuevos, continúa con los pasos siguientes
+7. abre Siesa
+8. inicia sesión
+9. navega por teclado hasta el menú de importación
+10. procesa archivo por archivo
+11. valida si Siesa consumió el `.PE0` desde `trm`
+12. detecta `.P99` nuevos o modificados
+13. sube `.P99` a `errores/`
+14. clasifica el resultado con base en consumo de `trm` y contenido del `.P99`
+15. limpia el `.PE0` local de `trm` si Siesa no lo consumió
+16. cierra Siesa después de procesar todos los pedidos
+17. reabre Siesa en una sesión limpia, inicia sesión de nuevo y genera el reporte `.P97` de los últimos `P97_LOOKBACK_DAYS` días (por defecto 15)
+18. sube el `.P97` a `confirmaciones/`
+19. registra resultado de corrida
+20. sube JSON a `resultados/`
+21. guarda `state.json` con los objetos procesados en esta corrida
+22. cierra Siesa
+
+Si la corrida falla con un error fatal antes de completar el flujo normal, el bot intenta de todas formas generar y subir el `.P97` (si aún no lo había subido en esa corrida) antes de reportar el resultado, para no perder la ventana de confirmación de ese ciclo.
 
 ### 9.7 Criterio de éxito del bot
 
@@ -499,9 +525,25 @@ Por cada corrida el bot sube un JSON como este:
     "files_with_warning": [],
     "files_with_error": [],
     "files_unresolved": [],
-    "fatal_error": null
+    "p97": {
+        "enabled": true,
+        "generated": true,
+        "date_from": "2026-03-22",
+        "date_to": "2026-04-06",
+        "local_file": "U:\\uno85c\\eurobelleza\\prt\\UCVE1064.P97",
+        "s3_key": "confirmaciones/UCVE1064_20260322_20260406_20260406_190000.P97",
+        "error": null
+    },
+    "fatal_error": null,
+    "log_file": "D:\\Escritorioo\\eurobelleza_rpa\\logs\\run_20260406_190000.log"
 }
 ```
+
+Notas sobre las claves:
+
+- `files_without_error` y `files_consumed_by_siesa` son listas de nombres de archivo (string). `files_with_warning`, `files_with_error` y `files_unresolved` son listas de objetos (`file`, `s3_key`, `p99_key`, `warnings`/`errors`, `consumed_by_siesa`, y `reason` solo en `files_unresolved`).
+- `files_consumed_by_siesa` no es excluyente con las demás categorías: un archivo consumido por Siesa pero con `.P99` de advertencia aparece tanto ahí como en `files_with_warning`.
+- El bloque `p97` refleja el resultado de la generación/subida del reporte de confirmación de esa misma corrida; si falla, `error` queda con el detalle y `generated` en `false`, pero el resto de la corrida (`files_*`) no se ve afectado.
 
 Ejemplo con advertencias:
 
@@ -729,10 +771,16 @@ Revisar:
 - `app/Jobs/ProcessShopifyOrder.php`
 - `app/Services/ShopifyOrderProcessor.php`
 - `app/Services/Siesa/SiesaFlatFileGenerator.php`
+- `app/Helpers/SiesaFileStructure.php`
 - `app/Services/OrderConfigurationValidator.php`
+- `app/Models/Order.php`
+- `app/Enums/OrderStatusEnum.php`
 - `app/Console/Kernel.php`
 - `app/Console/Commands/CheckSiesaErrors.php`
 - `app/Services/Siesa/SiesaRunResultProcessor.php`
+- `app/Console/Commands/ReconcileSiesaP97.php`
+- `app/Services/Siesa/SiesaP97Parser.php`
+- `app/Services/Siesa/SiesaP97Reconciler.php`
 - `config/filesystems.php`
 
 ### En `eurobelleza_rpa`
@@ -746,4 +794,6 @@ Revisar:
 
 ## 17. Estado actual del diseño
 
-La solución ya no marca pedidos como exitosos por “silencio” o ausencia de `.P99`. El bot usa como confirmación principal que Siesa haya consumido el `.PE0` desde `trm`. Laravel deduplica los resultados por archivo, prioriza errores sobre advertencias, guarda las advertencias en `error_message` cuando el pedido queda completado y limpia `pedidos/` en S3 al consumir la corrida.
+La solución ya no marca pedidos como exitosos por “silencio” o ausencia de `.P99`. El bot usa como confirmación principal que Siesa haya consumido el `.PE0` desde `trm`. Laravel deduplica los resultados del RPA por archivo, prioriza error > no resuelto > advertencia > sin error, y limpia `pedidos/` en S3 al consumir la corrida.
+
+Es importante entender que `siesa:process-rpa-results` **nunca** deja un pedido en `completed` por sí solo: los pedidos sin error quedan en `rpa_processing` (con la advertencia, si la hubo, guardada en `error_message`) esperando la siguiente conciliación P97. Solo `siesa:reconcile-p97` mueve pedidos a `completed`, al confirmarlos contra el reporte oficial de Siesa. Un pedido ya `completed` por P97 nunca es sobrescrito por un resultado de RPA posterior para ese mismo archivo.

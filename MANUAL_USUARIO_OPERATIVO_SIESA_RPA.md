@@ -44,11 +44,11 @@ El bot:
 
 Si Siesa acepta el pedido y consume el archivo, el pedido queda como:
 
-- `Completado`
+- `Procesando en RPA`
 
 Si Siesa acepta el pedido pero genera advertencias, también queda como:
 
-- `Completado`
+- `Procesando en RPA`
 
 En ese caso el mensaje de advertencia queda visible en el pedido.
 
@@ -56,11 +56,11 @@ Si Siesa rechaza el pedido, queda como:
 
 - `Error Siesa`
 
-Si el bot no puede confirmar que Siesa consumió el archivo, el pedido puede quedar como:
+Si el bot no puede confirmar que Siesa consumió el archivo, el pedido también puede quedar como:
 
 - `Procesando en RPA`
 
-Ese caso requiere revisión.
+En cualquiera de estos casos con `Procesando en RPA`, el pedido pasa a `Completado` más adelante, cuando el sistema concilia el reporte oficial de Siesa (P97) en los siguientes horarios automáticos. No es un cambio inmediato en la misma corrida del bot.
 
 ---
 
@@ -102,9 +102,9 @@ El bot ya tomó ese pedido en una corrida.
 
 ### Completado
 
-Siesa consumió el archivo del pedido.
+El pedido quedó confirmado en el reporte oficial que Siesa genera (P97) y el sistema lo concilió automáticamente. Esta es la confirmación final; llega después de que el pedido pasó por `Procesando en RPA`, no en el mismo momento en que Siesa consume el archivo.
 
-Puede tener advertencias informativas. Si las tiene, aparecerán en el mensaje del pedido.
+Puede haber tenido advertencias informativas en el camino. Si las tuvo, quedan visibles en el historial del pedido aunque ya esté `Completado`.
 
 ### Fallido
 
@@ -185,9 +185,9 @@ Si aparece un error de bodega, se debe revisar que esa configuración exista en 
 
 ## 7. Qué hacer si un pedido queda en Procesando en RPA
 
-`Procesando en RPA` puede significar que el bot tomó el archivo, pero no pudo confirmar que Siesa lo importó correctamente.
+`Procesando en RPA` es el estado normal de espera de todo pedido que el bot ya tomó, mientras se espera la siguiente conciliación con el reporte oficial de Siesa (P97). Un pedido que Siesa consumió sin problemas también pasa por aquí antes de llegar a `Completado`; no es en sí mismo una señal de error.
 
-Casos comunes:
+Sí conviene revisarlo con más cuidado cuando lleva mucho tiempo en ese estado sin pasar a `Completado` ni a `Error Siesa` después de varios ciclos de conciliación P97, o cuando el mensaje del pedido indica un caso ambiguo. Casos comunes de esto último:
 
 - el archivo siguió en la carpeta `trm`
 - Siesa no generó un `.P99`
@@ -203,7 +203,7 @@ Qué hacer:
 4. confirmar manualmente en Siesa si el pedido existe
 5. si el pedido no existe y la causa ya fue corregida, reprocesarlo manualmente desde la pantalla
 
-No asumir que `Procesando en RPA` significa completado.
+No asumir que `Procesando en RPA` significa que el pedido falló, pero tampoco asumir que ya quedó completado: la confirmación final llega con el P97.
 
 ---
 
@@ -313,11 +313,9 @@ Contactar soporte cuando ocurra cualquiera de estos casos:
 2. El sistema web los deja listos
 3. El bot corre a horas definidas
 4. El bot carga pedidos en Siesa
-5. El bot valida si Siesa consumió el archivo desde `trm`
-6. El sistema web marca cada pedido como:
+5. El bot valida si Siesa consumió el archivo desde `trm` y sube el resultado
+6. El sistema web marca cada pedido como `Procesando en RPA` (caso normal, esperando confirmación) o `Error Siesa` (si Siesa lo rechazó)
+7. El bot también genera y sube el reporte oficial de Siesa (P97) en cada corrida
+8. El sistema web concilia ese reporte poco después y mueve a `Completado` los pedidos que aparecen confirmados en él
 
-- `Completado`
-- o `Error Siesa`
-- o `Procesando en RPA` si no pudo confirmar el resultado
-
-En condiciones normales, el usuario revisa resultados, atiende errores y valida manualmente los casos que queden en `Procesando en RPA`.
+En condiciones normales, el usuario revisa resultados, atiende errores y solo necesita intervenir manualmente en los pedidos que queden mucho tiempo en `Procesando en RPA` sin pasar a `Completado`.
