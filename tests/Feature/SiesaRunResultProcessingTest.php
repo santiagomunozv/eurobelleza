@@ -189,10 +189,14 @@ class SiesaRunResultProcessingTest extends TestCase
 
         $order->refresh();
 
-        $this->assertSame(OrderStatusEnum::SIESA_ERROR, $order->status);
+        // "CLIENTE YA TIENE ESTE PEDIDO" se trata como duplicado a la espera de
+        // confirmación por P97, no como un error real de SIESA (ver
+        // SiesaRunResultProcessor::isDuplicateOrderError()).
+        $this->assertSame(OrderStatusEnum::RPA_PROCESSING, $order->status);
         $this->assertSame('[222222222222] CLIENTE YA TIENE ESTE PEDIDO | [000000] ITEM NO EXISTE', $order->error_message);
         $this->assertSame(1, $order->logs()->where('message', 'rpa_run_file_attempted')->count());
-        $this->assertSame(1, $order->logs()->where('message', 'rpa_run_completed_with_error')->count());
+        $this->assertSame(1, $order->logs()->where('message', 'rpa_run_duplicate_awaiting_p97')->count());
+        $this->assertSame(0, $order->logs()->where('message', 'rpa_run_completed_with_error')->count());
         $this->assertSame(0, $order->logs()->where('message', 'rpa_run_awaiting_p97_without_error')->count());
         $this->assertSame(0, $order->logs()->where('message', 'rpa_run_awaiting_p97_with_warning')->count());
         $this->assertSame(0, $order->logs()->where('message', 'rpa_run_unresolved_result')->count());

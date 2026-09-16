@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\SiesaGeneralConfiguration;
 use App\Models\SiesaPaymentGatewayMapping;
 use App\Repositories\SiesaWarehouseMappingRepository;
+use App\Services\Siesa\SiesaPaymentGatewayResolver;
 
 class OrderConfigurationValidator
 {
@@ -12,7 +13,8 @@ class OrderConfigurationValidator
     private const FIXED_BARRANQUILLA_LOCATION_ID = 80414146731;
 
     public function __construct(
-        private SiesaWarehouseMappingRepository $warehouseRepository
+        private SiesaWarehouseMappingRepository $warehouseRepository,
+        private SiesaPaymentGatewayResolver $paymentGatewayResolver
     ) {}
 
     /**
@@ -91,11 +93,22 @@ class OrderConfigurationValidator
             return 'El pedido no tiene método de pago (payment_gateway_names).';
         }
 
-        $gatewayName = $paymentGateways[0];
-        $mapping = SiesaPaymentGatewayMapping::findByGateway($gatewayName);
+        // Si Shopify reporta más de un gateway (p. ej. un intento rechazado
+        // seguido de uno exitoso con otro método), resuelve cuál cobró
+        // realmente consultando las transacciones del pedido.
+        $resolution = $this->paymentGatewayResolver->resolve(
+            $paymentGateways,
+            (string) ($orderData['id'] ?? '')
+        );
+
+        if (!$resolution['gateway']) {
+            return $resolution['error'] ?? 'No se pudo determinar el método de pago del pedido.';
+        }
+
+        $mapping = SiesaPaymentGatewayMapping::findByGateway($resolution['gateway']);
 
         if (!$mapping) {
-            return "Falta configuración para el método de pago: {$gatewayName}. Configure en Métodos de Pago.";
+            return "Falta configuración para el método de pago: {$resolution['gateway']}. Configure en Métodos de Pago.";
         }
 
         return null;

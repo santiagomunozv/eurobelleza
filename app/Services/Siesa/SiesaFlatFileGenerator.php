@@ -24,13 +24,16 @@ class SiesaFlatFileGenerator
 
     private OrderLogService $orderLogService;
     private SiesaWarehouseMappingRepository $warehouseRepository;
+    private SiesaPaymentGatewayResolver $paymentGatewayResolver;
 
     public function __construct(
         OrderLogService $orderLogService,
-        SiesaWarehouseMappingRepository $warehouseRepository
+        SiesaWarehouseMappingRepository $warehouseRepository,
+        SiesaPaymentGatewayResolver $paymentGatewayResolver
     ) {
         $this->orderLogService = $orderLogService;
         $this->warehouseRepository = $warehouseRepository;
+        $this->paymentGatewayResolver = $paymentGatewayResolver;
     }
 
     /**
@@ -108,7 +111,31 @@ class SiesaFlatFileGenerator
             throw new \Exception("El pedido #{$order->shopify_order_number} no tiene método de pago definido.");
         }
 
-        $gatewayName = $paymentGateways[0]; // Tomar el primero
+        // Si Shopify reporta más de un gateway (p. ej. un intento rechazado
+        // seguido de uno exitoso con otro método), resuelve cuál cobró
+        // realmente consultando las transacciones del pedido en vez de
+        // asumir que el primero del arreglo es el correcto.
+        $resolution = $this->paymentGatewayResolver->resolve(
+            $paymentGateways,
+            (string) ($orderData['id'] ?? '')
+        );
+
+        if (!$resolution['gateway']) {
+            $this->orderLogService->logError($order, 'payment_gateway_unresolved_multiple_gateways', [
+                'payment_gateway_names' => $paymentGateways,
+                'error' => $resolution['error'],
+            ]);
+            throw new \Exception($resolution['error'] ?? "No se pudo determinar el método de pago del pedido #{$order->shopify_order_number}.");
+        }
+
+        $gatewayName = $resolution['gateway'];
+
+        if (count($paymentGateways) > 1) {
+            $this->orderLogService->logInfo($order, 'payment_gateway_resolved_from_transactions', [
+                'payment_gateway_names' => $paymentGateways,
+                'resolved_gateway' => $gatewayName,
+            ]);
+        }
 
         // Si el gateway es "manual", buscar en tags
         if (strtolower($gatewayName) === 'manual') {

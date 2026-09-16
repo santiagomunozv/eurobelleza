@@ -101,23 +101,29 @@ $config = $this->siesaGeneralConfigRepository->getActiveConfiguration();
 
 **Tabla:** `siesa_payment_gateway_mappings`
 
-**Propósito:** Mapea las pasarelas de pago de Shopify (gateway) con los códigos de forma de pago de SIESA.
+**Propósito:** Mapea las pasarelas de pago de Shopify (gateway) con los códigos de SIESA.
 
-**Campos:**
+**Campos reales** (`database/migrations/..._create_siesa_payment_gateway_mappings_table.php`):
 
 ```php
 - id (bigint)
-- shopify_gateway (string, 100, unique) - Identificador de la pasarela en Shopify
-- forma_pago_code (string, 20) - Código de forma de pago en SIESA
+- payment_gateway_name (string, 100, unique) - Nombre del gateway en Shopify, o palabra
+  clave a buscar en los tags cuando el gateway es "manual" (ver más abajo)
+- sucursal (char, 2) - Código de sucursal en SIESA
+- condicion_pago (char, 2) - Código de condición de pago en SIESA
+- centro_costo (string, 8) - Código de centro de costo en SIESA
 - timestamps
 ```
 
-**Ejemplos de gateways Shopify:**
+> No existen columnas `shopify_gateway` ni `forma_pago_code` — todo el mapeo (exacto o por tags) usa la única columna `payment_gateway_name`, y el código en SIESA sale de `sucursal` + `condicion_pago` + `centro_costo`, no de un solo "forma_pago_code".
 
-- `bogota` (PSE)
-- `manual` (Pago manual)
-- `shopify_payments` (Tarjetas)
-- `paypal`
+**Ejemplos configurados actualmente:**
+
+- `Addi Payment`
+- `Checkout Mercado Pago`
+- `manual` (fallback genérico cuando no se puede resolver por tags)
+- `Mercado Pago Tarjetas`
+- `PayU`
 
 **Acceso Admin:**
 
@@ -127,11 +133,39 @@ $config = $this->siesaGeneralConfigRepository->getActiveConfiguration();
 **Uso en el código:**
 
 ```php
-// Repository
-$mapping = $this->siesaPaymentGatewayRepository->findByShopifyGateway($gateway);
+// Modelo (no repository)
+$mapping = SiesaPaymentGatewayMapping::findByGateway($gatewayName); // match exacto
 
 // Retorna: SiesaPaymentGatewayMapping | null
 ```
+
+#### 2.1 Cómo se resuelve el gateway de un pedido
+
+El nombre de gateway que se usa para el match exacto de arriba **no siempre es** `payment_gateway_names[0]` de Shopify. Desde septiembre de 2026, la resolución pasa por dos capas adicionales, ambas en `app/Services/Siesa/`:
+
+**a) Más de un gateway reportado por Shopify — `SiesaPaymentGatewayResolver`**
+
+Shopify puede reportar más de un valor en `payment_gateway_names` cuando hubo un intento de pago rechazado seguido de uno exitoso con otro método (ejemplo real: pedido #73879, `["Addi Payment", "Checkout Mercado Pago"]` — Addi fue rechazado por riesgo/fraude y el pago se completó por Mercado Pago dos minutos después). En ese caso:
+
+1. Si solo hay un gateway reportado, se usa directo (sin llamar a ninguna API).
+2. Si hay más de uno, se consulta `GET /orders/{id}/transactions.json` (`ShopifyApiClient::getOrderTransactions()`, endpoint que **no** se pedía antes — el recurso estándar `orders/{id}.json` no trae detalle de transacciones) y se toma el `gateway` de la transacción con `kind=sale` y `status=success`.
+3. Si no hay ninguna transacción exitosa, no se adivina: se devuelve un error explícito y el pedido queda pendiente de revisión.
+
+**b) Gateway = "manual" — matching por tags (`SiesaFlatFileGenerator::findGatewayFromTags()`)**
+
+Cuando el gateway resuelto en el paso anterior es literalmente `"manual"`, se busca el método real en los tags del pedido (texto libre, ej. `"Laura, link de pago Addi"`):
+
+1. Se tokenizan los tags y se descartan palabras de menos de 3 caracteres y las palabras "ruido" definidas en `SiesaFlatFileGenerator::TAG_MATCH_STOPWORDS` (`pago`, `pagos`, `link`, `pedido`, `compra`, `transferencia`, `cliente`, `envio`, `entrega`, `factura`, `orden`, `nota`) — son palabras genéricas que no identifican un método de pago por sí solas.
+2. Se compara **palabra exacta** contra las palabras del `payment_gateway_name` de cada mapeo configurado (no `LIKE`/substring — antes de este fix, la palabra `"pago"` hacía que pedidos de Addi se resolvieran como "Checkout Mercado Pago" solo por compartir esa palabra).
+3. Si más de un mapeo coincide, se compara su código SIESA (`sucursal`/`condicion_pago`/`centro_costo`): si todos representan el mismo código, no importa cuál se use (ej. "Checkout Mercado Pago" y "Mercado Pago Tarjetas" hoy comparten código); si representan códigos distintos, se marca como ambiguo (log `payment_gateway_ambiguous_match_from_tags`) y no se adivina.
+
+**Eventos de log relevantes** (`order_logs.message`):
+
+- `payment_gateway_resolved_from_transactions` — resuelto por transacciones (más de un gateway reportado)
+- `payment_gateway_unresolved_multiple_gateways` — varios gateways reportados, ninguna transacción exitosa encontrada
+- `payment_gateway_found_from_tags` — resuelto por tags (único candidato, o varios con el mismo código)
+- `payment_gateway_ambiguous_match_from_tags` — varios candidatos por tags con código SIESA distinto, requiere revisión manual
+- `payment_gateway_not_found_in_tags` / `payment_gateway_tags_no_usable_words` / `payment_gateway_tags_empty` — no se encontró ningún candidato
 
 ---
 
@@ -721,8 +755,12 @@ Actualizando datos desde Shopify...
 #### 2. Pasarela de Pago
 
 ```php
-✅ Verifica: Existe mapeo para payment_gateway_names[0]
-❌ Error: "No existe mapeo para la pasarela de pago: {gateway}"
+✅ Verifica: Existe mapeo para el gateway RESUELTO del pedido (no necesariamente
+   payment_gateway_names[0] — ver "2.1 Cómo se resuelve el gateway de un pedido"
+   más arriba: puede venir de las transacciones de Shopify si hay más de un
+   gateway reportado, o de los tags si el gateway es "manual")
+❌ Error: "Falta configuración para el método de pago: {gateway}", o el error de
+   SiesaPaymentGatewayResolver si no se pudo resolver cuál gateway cobró
 💡 Solución: Crear mapeo en /admin/siesa/payment-gateways
 ```
 
@@ -1009,7 +1047,7 @@ docker exec eurobelleza-back php artisan tinker
 4. Detecta financial_status = 'paid' en el mismo payload
 5. Valida configuración:
    ✅ Configuración general existe
-   ✅ Pasarela 'bogota' mapeada → forma_pago: '12'
+   ✅ Pasarela 'PayU' mapeada → sucursal/condición de pago/centro de costo configurados
    ✅ Bodega fija BARRANQUILLA configurada → location_id 80414146731 → bodega: '001', ubicación: '17'
 6. Validación exitosa → Encola ProcessShopifyOrder job
 7. Worker procesa job (ShopifyOrderProcessor):
@@ -1054,7 +1092,7 @@ docker exec eurobelleza-back php artisan tinker
 ```
 Orden #62400
 Gateway: 'wompi'
-Error: "No existe mapeo para la pasarela de pago: wompi"
+Error: "Falta configuración para el método de pago: wompi"
 Status: pending
 ```
 
@@ -1065,15 +1103,18 @@ Status: pending
 URL: https://tu-dominio.com/admin/siesa/payment-gateways
 
 # 2. Crear nuevo mapeo
-Shopify Gateway: wompi
-Forma Pago SIESA: 14  (ejemplo)
+Nombre del Método de Pago: wompi
+Sucursal: 01  (ejemplo)
+Condición de Pago: 30  (ejemplo)
+Centro de Costo: 021014  (ejemplo)
 Guardar
 
-# 3. Esperar al sync diario (02:00 AM) O forzar reprocesamiento manual:
+# 3. Esperar al siguiente ciclo (corre 3 veces al día, antes de cada ventana
+#    del bot RPA: ~6:45am, ~12:45pm, ~6:45pm) O forzar reprocesamiento manual:
 docker exec eurobelleza-back php artisan orders:reprocess --limit=1 --validate
 ```
 
-**Resultado:** En próximo sync, orden se procesará automáticamente.
+**Resultado:** En el próximo ciclo, la orden se procesará automáticamente.
 
 ---
 
@@ -1170,10 +1211,14 @@ docker exec eurobelleza-back php artisan orders:dispatch-pending --validate
 
 ```bash
 # Acceder a: /admin/siesa/payment-gateways
-# Crear mapeos para cada pasarela usada:
-- bogota → 12 (PSE)
-- manual → 01 (Manual)
-- shopify_payments → 03 (Tarjeta)
+# Crear mapeos (sucursal / condición de pago / centro de costo) para cada
+# pasarela usada, y para "manual" (fallback cuando el matching por tags no
+# resuelve nada). Configuración vigente actual:
+- Addi Payment
+- Checkout Mercado Pago
+- Mercado Pago Tarjetas
+- PayU
+- manual (fallback genérico)
 ```
 
 ### ✅ 3. Mapear Bodega Fija de Barranquilla
@@ -1394,6 +1439,6 @@ Para dudas o problemas técnicos, revisar:
 
 ---
 
-**Fecha de actualización:** 13 de septiembre de 2026  
-**Versión:** 2.0.0 — actualizado para reflejar la integración con S3, el bot RPA (`eurobelleza_rpa`) y la conciliación P97; ver también `MANUAL_TECNICO_INTEGRACION_SIESA_RPA.md` y `MANUAL_USUARIO_OPERATIVO_SIESA_RPA.md`  
+**Fecha de actualización:** 16 de septiembre de 2026  
+**Versión:** 2.1.0 — v2.0.0 reflejó la integración con S3, el bot RPA (`eurobelleza_rpa`) y la conciliación P97; v2.1.0 corrige el esquema real de `siesa_payment_gateway_mappings` y documenta `SiesaPaymentGatewayResolver` (resolución de gateway por transacciones de Shopify cuando hay más de un `payment_gateway_name`, y matching por tags corregido). Ver también `MANUAL_TECNICO_INTEGRACION_SIESA_RPA.md` y `MANUAL_USUARIO_OPERATIVO_SIESA_RPA.md`  
 **Sistema:** Laravel 11.48.0 + SIESA 8.5

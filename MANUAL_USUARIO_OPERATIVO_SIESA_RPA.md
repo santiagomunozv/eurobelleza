@@ -149,7 +149,7 @@ Si un pedido queda en `Error Siesa`:
 3. corregir lo que corresponda:
 
 - configuración
-- método de pago
+- método de pago (revisar el mensaje: puede ser que falte configurar un método de pago nuevo, o que el pedido tenga más de un método reportado por Shopify y no se haya podido determinar cuál cobró realmente — en ese caso el pedido queda con error en vez de asignar uno al azar)
 - bodega fija de Barranquilla
 - datos del pedido
 - duplicidad en Siesa

@@ -242,6 +242,19 @@ Configuración vigente de bodega:
 
 Por solicitud operativa, la generación del archivo plano no toma temporalmente la bodega desde `fulfillments.location_id` de Shopify. Todos los pedidos se generan usando esta bodega fija, siempre que exista el mapping en `siesa_warehouse_mappings`.
 
+### 5.3.1 Resolución del método de pago
+
+Archivo principal:
+
+- `app/Services/Siesa/SiesaPaymentGatewayResolver.php`
+
+El nombre de gateway que finalmente se busca en `siesa_payment_gateway_mappings` no siempre es `payment_gateway_names[0]` del pedido. Hay dos capas de resolución, en este orden:
+
+1. **Más de un gateway reportado por Shopify.** Pasa cuando hubo un intento de pago rechazado seguido de uno exitoso con otro método (caso real: pedido #73879, Addi rechazado por riesgo → pagado con Mercado Pago). El resolver llama `ShopifyApiClient::getOrderTransactions()` (`GET /orders/{id}/transactions.json`, endpoint que antes no se consultaba en ningún punto del sistema) y toma el `gateway` de la transacción con `kind=sale` y `status=success`. Si solo hay un gateway reportado, se usa directo sin llamar a la API. Si hay más de uno y ninguna transacción exitosa, no se adivina: queda como error explícito.
+2. **Gateway resuelto = `"manual"`.** Se busca en los tags del pedido (`SiesaFlatFileGenerator::findGatewayFromTags()`): se tokenizan los tags, se descartan palabras cortas y "ruido" (`pago`, `pagos`, `link`, `pedido`, `compra`, `transferencia`, `cliente`, `envio`, `entrega`, `factura`, `orden`, `nota` — la constante `TAG_MATCH_STOPWORDS`), y se compara **palabra exacta** (no substring) contra el nombre de cada mapeo configurado. Si varios mapeos coinciden pero representan el mismo código SIESA (sucursal/condición de pago/centro de costo), se resuelve sin problema; si representan códigos distintos, se marca como ambiguo y no se adivina.
+
+Antes de este fix, el matching por tags usaba `LIKE` contra el nombre completo del gateway y se quedaba con la primera palabra del tag que matcheara cualquier mapeo — por eso la palabra genérica `"pago"` (presente en tags como `"link de pago Addi"`) hacía que pedidos pagados con Addi se resolvieran como "Checkout Mercado Pago". Se validó contra los 569 pedidos históricos con gateway `"manual"`: 126 quedaban mal resueltos por este bug, 1 caso resultó genuinamente ambiguo (tag mencionaba dos gateways a la vez) y el resto no cambió.
+
 ### 5.4 Validación previa
 
 Archivo principal:
@@ -251,7 +264,7 @@ Archivo principal:
 Validaciones obligatorias:
 
 - configuración general Siesa
-- mapping de método de pago
+- mapping de método de pago (usa la misma resolución de la sección 5.3.1 — `SiesaPaymentGatewayResolver` — antes de buscar el mapeo, para no validar contra un gateway que luego la generación resolvería distinto)
 - mapping de la bodega fija de Barranquilla (`80414146731`)
 
 ### 5.5 Consumo del resultado RPA
@@ -771,6 +784,8 @@ Revisar:
 - `app/Jobs/ProcessShopifyOrder.php`
 - `app/Services/ShopifyOrderProcessor.php`
 - `app/Services/Siesa/SiesaFlatFileGenerator.php`
+- `app/Services/Siesa/SiesaPaymentGatewayResolver.php`
+- `app/Services/Shopify/ShopifyApiClient.php`
 - `app/Helpers/SiesaFileStructure.php`
 - `app/Services/OrderConfigurationValidator.php`
 - `app/Models/Order.php`
@@ -797,3 +812,5 @@ Revisar:
 La solución ya no marca pedidos como exitosos por “silencio” o ausencia de `.P99`. El bot usa como confirmación principal que Siesa haya consumido el `.PE0` desde `trm`. Laravel deduplica los resultados del RPA por archivo, prioriza error > no resuelto > advertencia > sin error, y limpia `pedidos/` en S3 al consumir la corrida.
 
 Es importante entender que `siesa:process-rpa-results` **nunca** deja un pedido en `completed` por sí solo: los pedidos sin error quedan en `rpa_processing` (con la advertencia, si la hubo, guardada en `error_message`) esperando la siguiente conciliación P97. Solo `siesa:reconcile-p97` mueve pedidos a `completed`, al confirmarlos contra el reporte oficial de Siesa. Un pedido ya `completed` por P97 nunca es sobrescrito por un resultado de RPA posterior para ese mismo archivo.
+
+Desde septiembre de 2026, la resolución del método de pago (sección 5.3.1) tampoco adivina cuando hay ambigüedad: si el pedido tiene más de un `payment_gateway_name` y ninguna transacción exitosa en Shopify, o si el matching por tags encuentra varios mapeos con código SIESA distinto, el pedido queda con error explícito en vez de generarse con un método de pago potencialmente incorrecto. El fix solo aplica hacia adelante: los ~126 pedidos históricos ya generados con el método de pago equivocado por el bug de matching de tags (y el pedido puntual afectado por el caso de múltiples gateways) ya quedaron creados en SIESA con el código anterior — esos requieren ajuste manual directo en SIESA si hace falta corregirlos contablemente, el fix no los reprocesa automáticamente.

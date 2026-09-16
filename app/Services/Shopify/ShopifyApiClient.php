@@ -124,6 +124,32 @@ class ShopifyApiClient
     }
 
     /**
+     * Obtiene las transacciones de un pedido (incluye intentos fallidos y exitosos).
+     * Se usa solo cuando un pedido reporta más de un payment_gateway_name, para
+     * determinar cuál gateway efectivamente cobró (kind=sale, status=success).
+     *
+     * @param string $shopifyOrderId ID numérico del pedido en Shopify (orderData['id'])
+     * @return array Lista de transacciones (arrays asociativos)
+     * @throws \Exception
+     */
+    public function getOrderTransactions(string $shopifyOrderId): array
+    {
+        $this->validateConfiguration();
+
+        try {
+            $response = $this->makeRequest('GET', "orders/{$shopifyOrderId}/transactions.json");
+
+            return $response['transactions'] ?? [];
+        } catch (\Exception $e) {
+            Log::error('Error obteniendo transacciones de pedido de Shopify', [
+                'shopify_order_id' => $shopifyOrderId,
+                'error' => $e->getMessage(),
+            ]);
+            throw $e;
+        }
+    }
+
+    /**
      * Realiza una petición a la API con retry logic
      */
     private function makeRequest(string $method, string $endpoint, array $params = [], int $attempt = 1): array
