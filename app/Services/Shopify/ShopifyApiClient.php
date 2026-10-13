@@ -152,7 +152,7 @@ class ShopifyApiClient
     /**
      * Realiza una petición a la API con retry logic
      */
-    private function makeRequest(string $method, string $endpoint, array $params = [], int $attempt = 1): array
+    private function makeRequest(string $method, string $endpoint, array $params = [], int $attempt = 1, bool $authRetried = false): array
     {
         try {
             $response = $this->client->request($method, $endpoint, [
@@ -163,17 +163,31 @@ class ShopifyApiClient
         } catch (GuzzleException $e) {
             $statusCode = $e->getCode();
 
+            // Token inválido/vencido - refrescar una sola vez y reintentar.
+            // Cualquier llamador puede caer en esto si el token cacheado no
+            // está vigente en este proceso (p. ej. el worker de colas, que a
+            // diferencia de los comandos programados no verifica el token
+            // antes de llamar a Shopify); no depende de que cada llamador
+            // recuerde refrescar explícitamente.
+            if ($statusCode === 401 && !$authRetried) {
+                Log::warning('Token de Shopify inválido, refrescando y reintentando', [
+                    'endpoint' => $endpoint,
+                ]);
+                $this->refreshAccessToken();
+                return $this->makeRequest($method, $endpoint, $params, $attempt, true);
+            }
+
             // Rate limit exceeded (429) - retry después de esperar
             if ($statusCode === 429 && $attempt < $this->maxRetries) {
                 $retryAfter = $this->getRetryAfter($e) ?? 2;
                 sleep($retryAfter);
-                return $this->makeRequest($method, $endpoint, $params, $attempt + 1);
+                return $this->makeRequest($method, $endpoint, $params, $attempt + 1, $authRetried);
             }
 
             // Otros errores temporales - retry
             if (in_array($statusCode, [500, 502, 503, 504]) && $attempt < $this->maxRetries) {
                 sleep(pow(2, $attempt)); // exponential backoff
-                return $this->makeRequest($method, $endpoint, $params, $attempt + 1);
+                return $this->makeRequest($method, $endpoint, $params, $attempt + 1, $authRetried);
             }
 
             throw new \Exception("Shopify API error: {$e->getMessage()}", $statusCode);
