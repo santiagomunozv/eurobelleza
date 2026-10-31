@@ -441,7 +441,10 @@ class SiesaFlatFileGenerator
 
         // 20) Posiciones 137-148: Precio unitario
         // Shopify entrega discount_allocations.amount como descuento total de la línea.
-        $line .= SiesaFileStructure::formatPrice($this->calculateFinalUnitPrice($lineItem));
+        // TEMPORAL (prueba diagnóstica oct/2026): forzar $1 en líneas de obsequio para
+        // descartar si el error "MOTIVO NO DEBE SER DE OBSEQUIO" depende del precio enviado.
+        $unitPrice = $isGift ? 1.0 : $this->calculateFinalUnitPrice($lineItem);
+        $line .= SiesaFileStructure::formatPrice($unitPrice);
 
         // 21) Posiciones 149-152: Descuento línea 1
         $line .= SiesaFileStructure::formatPercentage(0);
