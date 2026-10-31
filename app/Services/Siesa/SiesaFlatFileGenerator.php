@@ -22,6 +22,17 @@ class SiesaFlatFileGenerator
         'cliente', 'envio', 'entrega', 'factura', 'orden', 'nota',
     ];
 
+    // SKUs que, aunque Shopify los reporte con descuento del 100% (línea neta en
+    // $0), no deben enviarse como "obsequio" en Siesa: el motivo de obsequio (10)
+    // está amarrado al concepto 40 "Salidas/Obsequios por Venta", que es propio
+    // de Remisiones, no de Pedidos de Venta (confirmado con negocio oct/2026).
+    // Para estos SKUs se envía la línea como venta normal, con el precio de
+    // lista real y el descuento en el campo de descuento de línea (máx. 99.99%,
+    // el formato de 4 dígitos no admite un 100.00% exacto).
+    private const FORCE_DISCOUNT_INSTEAD_OF_GIFT_SKUS = [
+        'CARTUCHERA', // Obsequio Cartuchera KIDS
+    ];
+
     private OrderLogService $orderLogService;
     private SiesaWarehouseMappingRepository $warehouseRepository;
     private SiesaPaymentGatewayResolver $paymentGatewayResolver;
@@ -66,10 +77,12 @@ class SiesaFlatFileGenerator
 
         $lines = [];
         foreach ($lineItems as $lineItem) {
-            // Detectar si es producto de obsequio (precio final = 0)
-            $isGift = $this->isGiftLine($lineItem);
+            $forceDiscount = in_array($lineItem['sku'] ?? '', self::FORCE_DISCOUNT_INSTEAD_OF_GIFT_SKUS, true);
 
-            $lines[] = $this->generateLine($commonData, $lineItem, $config, false, $isGift);
+            // Detectar si es producto de obsequio (precio final = 0)
+            $isGift = !$forceDiscount && $this->isGiftLine($lineItem);
+
+            $lines[] = $this->generateLine($commonData, $lineItem, $config, false, $isGift, $forceDiscount);
         }
 
         // Agregar línea de envío si el valor es mayor a 0
@@ -367,9 +380,11 @@ class SiesaFlatFileGenerator
      * @param SiesaGeneralConfiguration $config Configuración general de SIESA
      * @param bool $isShipping Si es línea de envío (usa lista_precio_flete y motivo general)
      * @param bool $isGift Si es producto de obsequio (usa lista_precio_obsequio y motivo_obsequio)
+     * @param bool $forceDiscount Si debe enviarse como venta normal con precio de lista
+     *   real + descuento de línea, en vez de precio neto (ver FORCE_DISCOUNT_INSTEAD_OF_GIFT_SKUS)
      * @return string Línea de 543 caracteres
      */
-    private function generateLine(array $commonData, array $lineItem, SiesaGeneralConfiguration $config, bool $isShipping = false, bool $isGift = false): string
+    private function generateLine(array $commonData, array $lineItem, SiesaGeneralConfiguration $config, bool $isShipping = false, bool $isGift = false, bool $forceDiscount = false): string
     {
         $line = '';
 
@@ -441,10 +456,16 @@ class SiesaFlatFileGenerator
 
         // 20) Posiciones 137-148: Precio unitario
         // Shopify entrega discount_allocations.amount como descuento total de la línea.
-        $line .= SiesaFileStructure::formatPrice($this->calculateFinalUnitPrice($lineItem));
+        // En líneas con forceDiscount se manda el precio de lista real (no el neto),
+        // el descuento va aparte en el campo de descuento de línea.
+        $unitPrice = $forceDiscount
+            ? floatval($lineItem['price'] ?? 0)
+            : $this->calculateFinalUnitPrice($lineItem);
+        $line .= SiesaFileStructure::formatPrice($unitPrice);
 
         // 21) Posiciones 149-152: Descuento línea 1
-        $line .= SiesaFileStructure::formatPercentage(0);
+        $discount1 = $forceDiscount ? $this->calculateDiscountPercentage($lineItem) : 0;
+        $line .= SiesaFileStructure::formatPercentage($discount1);
 
         // 22) Posiciones 153-156: Descuento línea 2
         $line .= SiesaFileStructure::formatPercentage(0);
@@ -524,5 +545,21 @@ class SiesaFlatFileGenerator
     {
         return collect($lineItem['discount_allocations'] ?? [])
             ->sum(fn($allocation) => floatval($allocation['amount'] ?? 0));
+    }
+
+    // El campo de descuento de línea tiene 4 dígitos (2 decimales), así que el
+    // máximo representable es 99.99%: un descuento del 100% exacto no cabe.
+    private function calculateDiscountPercentage(array $lineItem): float
+    {
+        $quantity = intval($lineItem['quantity'] ?? 0);
+        $basePrice = floatval($lineItem['price'] ?? 0);
+
+        if ($quantity <= 0 || $basePrice <= 0) {
+            return 0.0;
+        }
+
+        $percentage = ($this->calculateLineDiscountAmount($lineItem) / ($basePrice * $quantity)) * 100;
+
+        return min($percentage, 99.99);
     }
 }
