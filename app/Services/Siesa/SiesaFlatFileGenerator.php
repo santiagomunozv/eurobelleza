@@ -452,7 +452,10 @@ class SiesaFlatFileGenerator
         $line .= SiesaFileStructure::padRight($listaPrecio, SiesaFileStructure::LISTA_PRECIO_LENGTH);
 
         // 19) Posiciones 135-136: Lista de descuento
-        $line .= SiesaFileStructure::padRight('', SiesaFileStructure::LISTA_DESCUENTO_LENGTH);
+        // Requerida por Siesa cuando se envía un descuento de línea (campo 21);
+        // "99" = LIBRE, confirmado con negocio oct/2026.
+        $listaDescuento = $forceDiscount ? '99' : '';
+        $line .= SiesaFileStructure::padRight($listaDescuento, SiesaFileStructure::LISTA_DESCUENTO_LENGTH);
 
         // 20) Posiciones 137-148: Precio unitario
         // Shopify entrega discount_allocations.amount como descuento total de la línea.
