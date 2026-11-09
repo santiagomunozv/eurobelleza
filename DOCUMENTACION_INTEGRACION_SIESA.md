@@ -27,7 +27,7 @@ Este documento cubre en detalle los maestros, el formato de archivo y la lógica
 - 🔄 Recepción del webhook de Shopify `orders/create`, con chequeo interno de `financial_status`
 - ✅ Validación de configuraciones antes de procesar (configuración general, pasarela de pago, bodega)
 - 📦 Sistema de colas para procesamiento asíncrono
-- 🏭 Bodega fija de Barranquilla para todos los pedidos (temporalmente, ver sección de validación)
+- 🏭 Resolución de bodega por `location_id` del fulfillment de Shopify (ver sección de validación)
 - 💳 Mapeo de pasarelas de pago
 - 📄 Generación de un archivo plano SIESA 8.5 por pedido (`.PE0`, un registro de 543 caracteres por línea)
 - ☁️ Publicación del `.PE0` en S3 para que el bot RPA lo procese
@@ -175,7 +175,9 @@ Cuando el gateway resuelto en el paso anterior es literalmente `"manual"`, se bu
 
 **Propósito:** Mapea las ubicaciones de Shopify con códigos de bodega y ubicación de SIESA.
 
-**Configuración vigente:** Por solicitud operativa, la integración usa temporalmente una bodega fija para todos los pedidos: `80414146731 → BODEGA BARRANQUILLA → 001/17`. El `location_id` de `fulfillments` de Shopify no determina la bodega mientras esta regla esté activa.
+**Configuración vigente:** La bodega se resuelve dinámicamente por el `location_id` de `fulfillments[0]` del pedido de Shopify, contra esta tabla. Si el pedido no trae `location_id` y existe un único mapping configurado, se usa ese como fallback.
+
+> Nota histórica: entre agosto y noviembre de 2026 estuvo activa una regla temporal que forzaba todos los pedidos a la bodega fija de Barranquilla, ignorando el `location_id` real. Fue desactivada (`USE_FIXED_BARRANQUILLA_WAREHOUSE = false` en `OrderConfigurationValidator` y `SiesaFlatFileGenerator`); el código de esa regla se conserva por si se necesita reactivar.
 
 **Campos:**
 
@@ -188,19 +190,14 @@ Cuando el gateway resuelto en el paso anterior es literalmente `"manual"`, se bu
 - timestamps
 ```
 
-**Datos vigentes:**
+**Mappings configurados:**
 
 ```
 80414146731 → BODEGA BARRANQUILLA → 001/17
-```
-
-**Datos históricos/otros mappings:**
-
-```
-80414245035 → BODEGA BOGOTÁ → 001/15
+80414245035 → BODEGA BOGOTÁ → 001/16
 80414113963 → BODEGA CALI → 001/15
-80414081195 → BODEGA SABANETA → 001/15
-63235489963 → Eurobelleza - Arroyo Hondo → 001/15
+80414081195 → BODEGA SABANETA → 001/18
+63235489963 → Eurobelleza - Arroyo Hondo → 001/05
 ```
 
 **Acceso Admin:**
@@ -374,10 +371,12 @@ public function validate(array $orderData): array
         $errors[] = "No existe mapeo para la pasarela: {$gateway}";
     }
 
-    // 3. Mapeo de Bodega — actualmente FIJO a Barranquilla, no depende del
-    //    fulfillment del pedido (ver USE_FIXED_BARRANQUILLA_WAREHOUSE más abajo)
-    if (!$this->warehouseMappingRepo->findByShopifyLocationId(80414146731)) {
-        $errors[] = 'No existe configuración de bodega fija para BODEGA BARRANQUILLA (location_id: 80414146731)';
+    // 3. Mapeo de Bodega — resuelto por fulfillments[0].location_id del pedido
+    $locationId = $orderData['fulfillments'][0]['location_id'] ?? null;
+    if ($locationId && !$this->warehouseMappingRepo->findByShopifyLocationId($locationId)) {
+        $errors[] = "No existe configuración de bodega para location_id: {$locationId}";
+    } elseif (!$locationId && $this->warehouseMappingRepo->all()->count() !== 1) {
+        $errors[] = 'El pedido no tiene location_id en fulfillments';
     }
 
     return [
@@ -387,7 +386,7 @@ public function validate(array $orderData): array
 }
 ```
 
-> La lógica para resolver la bodega dinámicamente por `fulfillments[0].location_id` sigue existiendo en el código (`OrderConfigurationValidator` y `SiesaFlatFileGenerator` conservan los métodos), pero está deshabilitada por una constante interna (`USE_FIXED_BARRANQUILLA_WAREHOUSE = true`, sin toggle por variable de entorno). Mientras esa constante sea `true`, el `location_id` real del pedido nunca se lee para elegir bodega.
+> Existe una constante interna (`USE_FIXED_BARRANQUILLA_WAREHOUSE`, sin toggle por variable de entorno) que, si se pone en `true`, fuerza todos los pedidos a la bodega fija de Barranquilla (`80414146731`) sin leer el `location_id` real del pedido. Se usó así entre agosto y noviembre de 2026 y actualmente está en `false` (resolución dinámica vigente); el código de la regla fija se conserva por si se necesita reactivar.
 
 #### 3️⃣ Job de Procesamiento
 
@@ -768,18 +767,18 @@ Actualizando datos desde Shopify...
 
 ```php
 ✅ Verifica:
-    - Existe el mapping fijo de Barranquilla
-    - Shopify Location ID: 80414146731
-    - Código bodega/localización: 001/17
+    - Existe el mapping para el location_id de fulfillments[0] del pedido
+    - Si no hay location_id, que exista un único mapping configurado (fallback)
 
 ❌ Errores posibles:
-    - "Falta configuración de bodega fija BODEGA BARRANQUILLA para location_id: 80414146731"
+    - "Falta configuración de bodega para location_id: {location_id}"
+    - "El pedido no tiene location_id en fulfillments" (y hay más de un mapping configurado)
 
 💡 Solución:
-    - Crear o corregir el mapeo 80414146731 → BODEGA BARRANQUILLA → 001/17 en /admin/siesa/warehouses
+    - Crear o corregir el mapeo correspondiente en /admin/siesa/warehouses
 ```
 
-> Nota técnica: el código conserva la resolución anterior por `fulfillments[0].location_id` y fallback a única bodega configurada, pero por ahora está desactivada mediante la bandera interna que fuerza Barranquilla.
+> Nota técnica: el código conserva la bandera interna `USE_FIXED_BARRANQUILLA_WAREHOUSE` que, en `true`, fuerza todos los pedidos a la bodega fija de Barranquilla (`80414146731 → BODEGA BARRANQUILLA → 001/17`) sin usar el `location_id` real. Está en `false` desde noviembre de 2026; la resolución dinámica por fulfillment es la vigente.
 
 ### Uso en el código
 
@@ -847,16 +846,16 @@ public function updatePendingOrders(): void
 **Casos que cubre:**
 
 1. **Orden creada sin fulfillment →** JSON actualizado después
-    - Con la regla vigente de bodega fija, la falta de fulfillment ya no bloquea la bodega
-    - El refresh sigue actualizando datos frescos de Shopify para otros campos operativos
+    - Primera ejecución: sin `location_id` y más de un mapping configurado → Queda pending
+    - Segunda ejecución: con fulfillment/location_id ya presente → Validación pasa → Se procesa ✅
 
 2. **Orden con pasarela no mapeada →** Mapeo creado después
     - Primera ejecución: Sin mapeo → Queda pending
     - Segunda ejecución: Con mapeo → Validación pasa → Se procesa ✅
 
-3. **Bodega fija de Barranquilla no configurada →** Mapping creado después
-    - Primera ejecución: Falta `80414146731` → Queda failed o pendiente según punto de entrada
-    - Segunda ejecución: Con mapping `80414146731 → 001/17` → Validación pasa → Se procesa ✅
+3. **Bodega no configurada para el location_id del pedido →** Mapping creado después
+    - Primera ejecución: Falta el mapping para ese `location_id` → Queda failed o pendiente según punto de entrada
+    - Segunda ejecución: Con el mapping creado → Validación pasa → Se procesa ✅
 
 4. **Orden pagada después →** financial_status cambia a 'paid'
     - Primera ejecución: Unpaid → Queda pending
@@ -894,8 +893,8 @@ Posiciones | Long. | Campo                          | Relleno/formato
 32-44      | 13    | Código del cliente             | config.codigo_cliente
 45-46      | 2     | Sucursal                       | del mapeo de pasarela de pago
 47-54      | 8     | Fecha del pedido (AAAAMMDD)    | order_json.created_at
-55-57      | 3     | Bodega                         | mapeo de bodega (fija Barranquilla: 001)
-58-59      | 2     | Localización                   | mapeo de bodega (fija Barranquilla: 17)
+55-57      | 3     | Bodega                         | mapeo de bodega por location_id del fulfillment
+58-59      | 2     | Localización                   | mapeo de bodega por location_id del fulfillment
 60         | 1     | Tipo de búsqueda del ítem      | config.tipo_busqueda_item
 61-75      | 15    | Código de barras               | vacío
 76-90      | 15    | Código del ítem (SKU)          | line_item.sku
@@ -1048,7 +1047,7 @@ docker exec eurobelleza-back php artisan tinker
 5. Valida configuración:
    ✅ Configuración general existe
    ✅ Pasarela 'PayU' mapeada → sucursal/condición de pago/centro de costo configurados
-   ✅ Bodega fija BARRANQUILLA configurada → location_id 80414146731 → bodega: '001', ubicación: '17'
+   ✅ Bodega mapeada → location_id del fulfillment → bodega/ubicación correspondiente
 6. Validación exitosa → Encola ProcessShopifyOrder job
 7. Worker procesa job (ShopifyOrderProcessor):
    - Genera el contenido del .PE0 (SiesaFlatFileGenerator::generate())
@@ -1074,12 +1073,15 @@ docker exec eurobelleza-back php artisan tinker
 ```
 17 Feb - 10:00 AM:
 1. Webhook llega → orden pagada pero sin fulfillments
-2. Validación usa la bodega fija de Barranquilla, no el fulfillment del pedido
-3. Si existe el mapping 80414146731 → 001/17, la orden puede procesarse
-4. El archivo queda en S3 y el pedido pasa a sent_to_siesa
+2. Validación busca location_id en fulfillments[0]; no existe
+3. Si hay un único mapping de bodega configurado en el sistema, se usa ese
+   como fallback y la orden puede procesarse
+4. Si hay más de un mapping configurado, queda pending con el error
+   "El pedido no tiene location_id en fulfillments", a la espera de que
+   orders:refresh-shopify-data traiga el fulfillment real
 ```
 
-**Resultado:** Mientras la bodega fija esté activa, la falta de fulfillment no bloquea la selección de bodega. La lógica anterior por fulfillment sigue conservada en código para reactivarla cuando se requiera.
+**Resultado:** La falta de fulfillment solo bloquea la orden cuando hay más de una bodega mapeada en el sistema (no se puede adivinar cuál). Con un único mapping configurado, no bloquea.
 
 ---
 
@@ -1121,10 +1123,6 @@ docker exec eurobelleza-back php artisan orders:reprocess --limit=1 --validate
 ### 4. Nueva Ubicación de Shopify
 
 **Escenario:** Se abre nueva bodega en Shopify con location_id: 99988877766.
-
-**Estado vigente:** No afecta la generación del archivo plano mientras la regla temporal de Barranquilla fija esté activa. Todos los pedidos usan `80414146731 → BODEGA BARRANQUILLA → 001/17`.
-
-**Cuando se reactive la resolución dinámica por fulfillment, aplicará este flujo:**
 
 **Problema identificado:**
 
@@ -1221,15 +1219,19 @@ docker exec eurobelleza-back php artisan orders:dispatch-pending --validate
 - manual (fallback genérico)
 ```
 
-### ✅ 3. Mapear Bodega Fija de Barranquilla
+### ✅ 3. Mapear Bodegas por Ubicación de Shopify
 
 ```bash
 # Acceder a: /admin/siesa/warehouses
-# Crear o verificar el mapeo activo:
+# Crear o verificar el mapeo de cada ubicación de Shopify que genere pedidos:
 - 80414146731 → BODEGA BARRANQUILLA → 001/17
+- 80414245035 → BODEGA BOGOTÁ → 001/16
+- 80414113963 → BODEGA CALI → 001/15
+- 80414081195 → BODEGA SABANETA → 001/18
+- 63235489963 → Eurobelleza - Arroyo Hondo → 001/05
 ```
 
-> La lógica para mapear múltiples ubicaciones de Shopify se conserva en código, pero temporalmente no se usa para seleccionar la bodega del archivo Siesa.
+> La bodega se resuelve dinámicamente por `fulfillments[0].location_id` del pedido. Existe una bandera interna (`USE_FIXED_BARRANQUILLA_WAREHOUSE`) para forzar la bodega fija de Barranquilla si se necesita reactivar esa regla temporal.
 
 ### ✅ 4. Configurar Webhook en Shopify
 

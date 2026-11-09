@@ -11,7 +11,7 @@ use App\Services\OrderLogService;
 
 class SiesaFlatFileGenerator
 {
-    private const USE_FIXED_BARRANQUILLA_WAREHOUSE = true;
+    private const USE_FIXED_BARRANQUILLA_WAREHOUSE = false;
     private const FIXED_BARRANQUILLA_LOCATION_ID = 80414146731;
 
     // Palabras frecuentes en tags de pedidos manuales que no identifican un método de pago

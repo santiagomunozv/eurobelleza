@@ -230,17 +230,14 @@ Responsabilidades:
 - construir el contenido del archivo Siesa
 - leer configuración general
 - resolver método de pago
-- resolver bodega fija de Barranquilla
+- resolver bodega a partir del `fulfillments[0].location_id` del pedido
 - agregar líneas por producto y envío
 
-Configuración vigente de bodega:
+Resolución de bodega:
 
-- Shopify Location ID: `80414146731`
-- Nombre: `BODEGA BARRANQUILLA`
-- Código bodega Siesa: `001`
-- Código localización Siesa: `17`
+La bodega se busca en `siesa_warehouse_mappings` por el `location_id` de `fulfillments[0]` del pedido de Shopify. Si el pedido no trae `location_id` y existe un único mapping configurado, se usa ese como fallback; si existe más de uno, el pedido queda con error pidiendo configurar la bodega.
 
-Por solicitud operativa, la generación del archivo plano no toma temporalmente la bodega desde `fulfillments.location_id` de Shopify. Todos los pedidos se generan usando esta bodega fija, siempre que exista el mapping en `siesa_warehouse_mappings`.
+> Nota histórica: entre agosto y noviembre de 2026 existió una regla temporal (`USE_FIXED_BARRANQUILLA_WAREHOUSE`) que forzaba todos los pedidos a la bodega fija `80414146731 → BODEGA BARRANQUILLA → 001/17`, sin usar el `location_id` real del pedido. Esa constante fue desactivada (`false`) y la resolución dinámica por fulfillment volvió a ser la vigente. El código de la regla fija se conserva (métodos `resolveFixedBarranquillaWarehouseMapping` en `SiesaFlatFileGenerator` y la rama correspondiente en `OrderConfigurationValidator`) por si se necesita reactivar.
 
 ### 5.3.1 Resolución del método de pago
 
@@ -265,7 +262,7 @@ Validaciones obligatorias:
 
 - configuración general Siesa
 - mapping de método de pago (usa la misma resolución de la sección 5.3.1 — `SiesaPaymentGatewayResolver` — antes de buscar el mapeo, para no validar contra un gateway que luego la generación resolvería distinto)
-- mapping de la bodega fija de Barranquilla (`80414146731`)
+- mapping de bodega para el `location_id` del pedido (ver nota histórica en 5.3 sobre la regla fija de Barranquilla, ya desactivada)
 
 ### 5.5 Consumo del resultado RPA
 

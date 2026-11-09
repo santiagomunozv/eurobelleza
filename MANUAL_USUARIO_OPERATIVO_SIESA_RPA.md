@@ -150,7 +150,7 @@ Si un pedido queda en `Error Siesa`:
 
 - configuración
 - método de pago (revisar el mensaje: puede ser que falte configurar un método de pago nuevo, o que el pedido tenga más de un método reportado por Shopify y no se haya podido determinar cuál cobró realmente — en ese caso el pedido queda con error en vez de asignar uno al azar)
-- bodega fija de Barranquilla
+- bodega del pedido (mapping faltante para el location_id de Shopify)
 - datos del pedido
 - duplicidad en Siesa
 
@@ -172,14 +172,13 @@ Ese tipo de advertencia no necesariamente bloquea el pedido. El criterio princip
 
 Nota operativa sobre bodega:
 
-Por ahora todos los pedidos se envían a Siesa con la bodega fija de Barranquilla:
+La bodega del pedido se resuelve dinámicamente a partir de `fulfillments[0].location_id` de Shopify, contra el mapping configurado en el panel de ubicaciones/bodegas. Si Shopify abre una nueva ubicación, hay que crear su mapping antes de que lleguen pedidos de esa bodega.
 
-- Shopify Location ID: `80414146731`
-- Bodega: `BODEGA BARRANQUILLA`
-- Código bodega: `001`
-- Código localización: `17`
+Si el pedido no trae `location_id` en `fulfillments`, y solo existe un mapping de bodega configurado en el sistema, se usa ese por defecto. Si existe más de uno, el pedido queda con error pidiendo configurar la bodega.
 
-Si aparece un error de bodega, se debe revisar que esa configuración exista en el panel de ubicaciones/bodegas. No depende temporalmente de la bodega que venga asignada en Shopify.
+Si aparece un error de bodega, se debe revisar que exista el mapping correspondiente al location_id de ese pedido en el panel de ubicaciones/bodegas.
+
+> Nota histórica: entre agosto y noviembre de 2026 estuvo activa una regla temporal que forzaba todos los pedidos a la bodega fija de Barranquilla (`80414146731`), sin usar el location_id real del pedido. Esa regla fue desactivada y ya no aplica.
 
 ---
 
