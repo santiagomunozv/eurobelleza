@@ -25,7 +25,16 @@ class OrderRepository
 
     public function create(array $data): Order
     {
-        return Order::create($data);
+        $order = new Order($data);
+
+        $shopifyCreatedAt = $data['order_json']['created_at'] ?? null;
+        if ($shopifyCreatedAt) {
+            $order->created_at = \Illuminate\Support\Carbon::parse($shopifyCreatedAt);
+        }
+
+        $order->save();
+
+        return $order;
     }
 
     public function update(Order $order, array $data): bool
