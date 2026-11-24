@@ -309,7 +309,7 @@ class SiesaFlatFileGenerator
             return null;
         }
 
-        $tagWords = collect(preg_split('/[\s,]+/', strtolower($tags)))
+        $tagWords = collect(preg_split('/[\s,\-_]+/', strtolower($tags)))
             ->filter(fn (string $word) => strlen($word) >= 3 && !in_array($word, self::TAG_MATCH_STOPWORDS, true))
             ->unique();
 
@@ -323,7 +323,7 @@ class SiesaFlatFileGenerator
 
         $candidates = []; // indexado por mapping id, para deduplicar coincidencias por varias palabras
         foreach (SiesaPaymentGatewayMapping::all() as $mapping) {
-            $gatewayWords = preg_split('/\s+/', strtolower($mapping->payment_gateway_name));
+            $gatewayWords = preg_split('/[\s\-_]+/', strtolower($mapping->payment_gateway_name));
 
             if ($tagWords->intersect($gatewayWords)->isNotEmpty()) {
                 $candidates[$mapping->id] = $mapping;

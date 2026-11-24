@@ -291,9 +291,18 @@ class ShopifyApiClient
             $newToken = $data['access_token'];
             $expiresIn = $data['expires_in'] ?? 86400; // 24 horas por defecto
 
-            // Guardar en cache por 23 horas (para renovar antes de que expire)
+            // Guardar en cache por 23 horas (para renovar antes de que expire).
+            // Si falla la escritura en disco (p. ej. permisos), no se debe perder el
+            // pedido que disparó esta renovación: el token ya es válido en memoria
+            // (se usa más abajo) y el próximo request simplemente lo renovará de nuevo.
             $cacheMinutes = floor(($expiresIn - 3600) / 60); // Restar 1 hora de margen
-            Cache::put('shopify_access_token', $newToken, now()->addMinutes($cacheMinutes));
+            try {
+                Cache::put('shopify_access_token', $newToken, now()->addMinutes($cacheMinutes));
+            } catch (\Throwable $e) {
+                Log::warning('No se pudo persistir el token de Shopify en cache; se usará solo en memoria para este request', [
+                    'error' => $e->getMessage(),
+                ]);
+            }
 
             // Actualizar el token en la instancia actual
             $this->accessToken = $newToken;
