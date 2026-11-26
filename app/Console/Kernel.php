@@ -25,6 +25,14 @@ class Kernel extends ConsoleKernel
             ->cron('25 6,12,18 * * *')
             ->timezone('America/Bogota');
 
+        // Reconsulta pedidos pending sin location_id en fulfillments, sin límite de días:
+        // --non-completed --days=5 deja de revisarlos pasados 5 días, por lo que un pedido
+        // al que Shopify le asigna bodega después de ese plazo quedaría pending para siempre
+        // si no se revisa por separado sin ventana de tiempo.
+        $schedule->command('orders:refresh-shopify-data --pending-without-fulfillments')
+            ->cron('28 6,12,18 * * *')
+            ->timezone('America/Bogota');
+
         // Marcado de pagos vencidos que ya no deben quedar como pendientes operativos
         $schedule->command('orders:mark-expired-payments --days=3 --max-days=30')
             ->cron('35 6,12,18 * * *')
